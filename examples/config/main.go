@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 
@@ -24,9 +25,10 @@ func main() {
 	args := []string{"-d"}                      // short flag
 
 	if err := config.Parse(&cfg, config.Options{
-		UseBuildInfo: true,
-		EnvPrefix:    "APP",
-		Args:         args,
+		UseBuildInfo:  true,
+		EnvPrefix:     "APP",
+		Args:          args,
+		ErrorHandling: flag.ContinueOnError, // change to see behavior on error
 	}); err != nil {
 		log.Fatal(err)
 	}
