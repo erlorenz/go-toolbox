@@ -1,5 +1,25 @@
 package config
 
+import (
+	"flag"
+	"os"
+)
+
+// DefaultConfigOptions returns the default configuration options
+func DefaultConfigOptions() Options {
+	opts := Options{
+		ProgramName:   os.Args[0],
+		EnvPrefix:     "",
+		SkipFlags:     false,
+		SkipEnv:       false,
+		Args:          os.Args[1:],
+		ErrorHandling: flag.ContinueOnError,
+		UseBuildInfo:  false,
+	}
+
+	return opts
+}
+
 func setOptions(options Options) Options {
 
 	// Start with default options, then override with provided values
@@ -19,7 +39,9 @@ func setOptions(options Options) Options {
 	if options.SkipEnv {
 		opts.SkipEnv = true
 	}
-
+	if options.UseBuildInfo {
+		opts.UseBuildInfo = true
+	}
 	if len(options.Args) > 0 {
 		opts.Args = options.Args
 	}

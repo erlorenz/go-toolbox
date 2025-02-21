@@ -11,13 +11,17 @@ func main() {
 
 	var cfg struct {
 		Environment string
+		Version     string
 	}
 
 	os.Setenv("ENVIRONMENT", "development")
 
-	if err := config.Parse(&cfg, config.Options{}); err != nil {
+	if _, err := config.Parse(&cfg, config.Options{
+		UseBuildInfo: true,
+	}); err != nil {
 		log.Fatal(err)
 	}
 
-	log.Printf("%#v", cfg)
+	log.Printf("%s: %s", "Version", cfg.Version)
+	log.Printf("%s: %s", "Environment", cfg.Environment)
 }

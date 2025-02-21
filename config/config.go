@@ -7,57 +7,30 @@
 package config
 
 import (
+	"cmp"
 	"errors"
 	"flag"
 	"fmt"
 	"maps"
 	"os"
 	"reflect"
+	"runtime/debug"
 	"strconv"
 	"strings"
 )
 
-// Config tag constants
 const (
-	configTag  = "config"  // Main config tag
-	envTag     = "env"     // Environment variable name
-	flagTag    = "flag"    // Command line flag name
-	defaultTag = "default" // Default value
-	// descriptionTag = "desc"     // Description for help messages
-	optionalTag = "optional" // Mark field as optional
+	configTag      = "config"
+	envTag         = "env"
+	flagTag        = "flag"
+	defaultTag     = "default"
+	descriptionTag = "desc"     // Description for help messages
+	optionalTag    = "optional" // Mark field as optional
+	shortTag       = "short"    // Short flag in addition
 	// validateTag    = "validate" // Validation rules
 )
 
-// ValidationError represents a configuration validation error
-type ValidationError struct {
-	Field   string
-	Message string
-}
-
-func (e ValidationError) Error() string {
-	return fmt.Sprintf("validation error for field '%s': %s", e.Field, e.Message)
-}
-
-// MultiError holds multiple errors that occurred during parsing
-type MultiError struct {
-	Errors []error
-}
-
-func (m MultiError) Error() string {
-	if len(m.Errors) == 0 {
-		return "no errors"
-	}
-
-	errMsgs := make([]string, len(m.Errors))
-	for i, err := range m.Errors {
-		errMsgs[i] = err.Error()
-	}
-
-	return fmt.Sprintf("%d error(s) occurred:\n- %s",
-		len(m.Errors), strings.Join(errMsgs, "\n- "))
-}
-
-// Options holds options for the Parse function
+// Options holds options for the Parse function.
 type Options struct {
 	// ProgramName is used in usage messages for command line flags
 	ProgramName string
@@ -71,23 +44,11 @@ type Options struct {
 	Args []string
 	// ErrorHandling determines how parsing errors are handled
 	ErrorHandling flag.ErrorHandling
+	// UseBuildInfo uses debug.BuildInfo to set the Version property to the git tag.
+	UseBuildInfo bool
 }
 
-// DefaultConfigOptions returns the default configuration options
-func DefaultConfigOptions() Options {
-	opts := Options{
-		ProgramName:   os.Args[0],
-		EnvPrefix:     "",
-		SkipFlags:     false,
-		SkipEnv:       false,
-		Args:          os.Args[1:],
-		ErrorHandling: flag.ContinueOnError,
-	}
-
-	return opts
-}
-
-// Parse populates the config struct from different sources
+// Parse populates the config struct from different sources.
 // It follows this precedence order (highest to lowest):
 // 1. Command line arguments
 // 2. Environment variables
@@ -95,49 +56,54 @@ func DefaultConfigOptions() Options {
 // 4. Default values from struct tags
 func Parse(cfg any, options Options) (map[string]configField, error) {
 
-	// opts := setOptions(options)
-
-	// Get reflected value and ensure it's a pointer to a struct
+	// Make sure it is pointer to struct
 	v := reflect.ValueOf(cfg)
 	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
 		return nil, errors.New("config must be a pointer to a struct")
 	}
-	v = v.Elem()
 
-	var allErrors MultiError
+	// Set default options and override if non-zero
+	opts := setOptions(options)
 
-	structMap := walkStruct(v, "")
+	// Walk the concrete struct
+	// Skips any fields that are already populated
+	structMap := walkStruct(v.Elem(), "")
 
+	// 1. Use the default tags
 	if err := applyDefaults(structMap); err != nil {
 		return structMap, err
 	}
 
-	if err := applyEnvs(structMap); err != nil {
-		return structMap, err
+	// 2. Override with env vars
+	if !opts.SkipEnv {
+		err := applyEnvs(structMap)
+		if err != nil {
+			return structMap, err
+		}
 	}
 
-	// Parse environment variables (if enabled)
-	// if !opts.SkipEnv {
-	// 	if err := parseEnv(v, opts.EnvPrefix); err != nil {
-	// 		allErrors.Errors = append(allErrors.Errors, fmt.Errorf("parsing environment variables: %w", err))
-	// 	}
-	// }
+	// 3. Parse flags and override with values
+	if !opts.SkipFlags {
+		err := applyFlags(structMap, opts)
+		if err != nil {
+			return structMap, err
+		}
+	}
 
-	// Parse command line arguments (if enabled, highest precedence)
-	// if !opts.SkipFlags {
-	// 	if err := parseFlags(v, opts.ProgramName, opts.Args, opts.ErrorHandling); err != nil {
-	// 		allErrors.Errors = append(allErrors.Errors, fmt.Errorf("parsing command line flags: %w", err))
-	// 	}
-	// }
+	// Set Version if opts.UseBuildInfo == true
+	if opts.UseBuildInfo {
+		bi, _ := debug.ReadBuildInfo()
+
+		version, ok := structMap["Version"]
+		if ok {
+			version.Value.SetString(cmp.Or(bi.Main.Version, "(develop)"))
+		}
+	}
 
 	// Validate the configuration
 	// if err := validate(v); err != nil {
 	// 	allErrors.Errors = append(allErrors.Errors, fmt.Errorf("validation: %w", err))
 	// }
-
-	if len(allErrors.Errors) > 0 {
-		return nil, allErrors
-	}
 
 	return structMap, nil
 }
@@ -149,6 +115,7 @@ type configField struct {
 	Name        string
 	StructField reflect.StructField
 	Tag         reflect.StructTag
+	Description string
 }
 
 func walkStruct(v reflect.Value, currPath string) map[string]configField {
@@ -158,11 +125,16 @@ func walkStruct(v reflect.Value, currPath string) map[string]configField {
 
 	for i := 0; i < v.NumField(); i++ {
 		// Get values
-		field := v.Field(i)
+		fieldVal := v.Field(i)
 		structField := t.Field(i)
 		name := structField.Name
-		kind := field.Kind()
+		kind := fieldVal.Kind()
 		tag := structField.Tag
+
+		// Skip fields already filled
+		if !fieldVal.IsZero() {
+			continue
+		}
 
 		// Join the path
 		path := name
@@ -172,66 +144,143 @@ func walkStruct(v reflect.Value, currPath string) map[string]configField {
 
 		// Recursive for structs
 		if kind == reflect.Struct {
-			nestedFields := walkStruct(field, path)
+			nestedFields := walkStruct(fieldVal, path)
 			maps.Copy(fields, nestedFields)
 			continue
 		}
+		desc := cmp.Or(tag.Get(descriptionTag), path)
 
-		val := field
 		fields[path] = configField{
-			Path: path, Value: val, Kind: kind, Name: name, StructField: structField, Tag: tag}
+			Path: path, Value: fieldVal, Kind: kind, Name: name, StructField: structField, Tag: tag, Description: desc}
 	}
 	return fields
 }
 
 func applyDefaults(fields map[string]configField) error {
-	var allErrs MultiError
+	var allErrs []error
 
 	for _, field := range fields {
-		def, ok := field.Tag.Lookup(defaultTag)
+		defVal, ok := field.Tag.Lookup(defaultTag)
 		if !ok {
 			continue
 		}
 
 		switch field.Kind {
+		// String
 		case reflect.String:
-			field.Value.SetString(def)
+			field.Value.SetString(defVal)
+		// Int
 		case reflect.Int:
-			intVal, _ := strconv.ParseInt(def, 10, 64)
+			intVal, _ := strconv.ParseInt(defVal, 10, 64)
 			field.Value.SetInt(intVal)
 		default:
-			allErrs.Errors = append(allErrs.Errors, fmt.Errorf("cannot set %s: unimplemented kind %s", field.Path, field.Kind))
+			allErrs = append(allErrs, fmt.Errorf("cannot set %s: unimplemented kind %s", field.Path, field.Kind))
 		}
 	}
-	if len(allErrs.Errors) > 0 {
-		return allErrs
+	if len(allErrs) > 0 {
+		return &MultiError{allErrs}
 	}
 	return nil
 }
 
 func applyEnvs(fields map[string]configField) error {
-	var multErr MultiError
+	var allErrs []error
 
 	for _, field := range fields {
-
 		envName := toScreamingSnakeCase(field.Path)
 
-		def, ok := field.Tag.Lookup(envTag)
+		// Overwrite with tag
+		tagVal, ok := field.Tag.Lookup(envTag)
 		if ok {
-			envName = def
+			envName = tagVal
 		}
 
-		val, ok := os.LookupEnv(envName)
+		envVal, ok := os.LookupEnv(envName)
 		if !ok {
 			continue
 		}
 
+		switch field.Kind {
 		// String
-		field.Value.SetString(val)
+		case reflect.String:
+			field.Value.SetString(envVal)
+		// Int
+		case reflect.Int:
+			intVal, err := strconv.ParseInt(envVal, 10, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetInt(intVal)
+		default:
+			allErrs = append(allErrs, fmt.Errorf("cannot set %s: unimplemented kind %s", field.Path, field.Kind))
+		}
 	}
 
-	if len(multErr.Errors) > 0 {
-		return multErr
+	if len(allErrs) > 0 {
+		return &MultiError{allErrs}
+	}
+	return nil
+}
+
+func applyFlags(fields map[string]configField, opts Options) error {
+	allErrs := &MultiError{}
+
+	flags := flag.NewFlagSet(opts.ProgramName, opts.ErrorHandling)
+
+	// Temporary flag map of string values
+	flagValues := map[string]*string{}
+
+	// Load the flagValues map with the flag values
+	for path, field := range fields {
+		flagName := toKebabCase(field.Path)
+		shortFlagName := field.Tag.Get(shortTag)
+
+		// Overwrite with tag
+		if tagVal, ok := field.Tag.Lookup(flagTag); ok {
+			flagName = tagVal
+		}
+
+		flagValues[path] = flags.String(flagName, "", field.Description)
+		if shortFlagName != "" {
+			flagValues[path+"-short"] = flags.String(shortFlagName, "", field.Description)
+		}
+
+	}
+
+	// Parse flags
+	if err := flags.Parse(opts.Args); err != nil {
+		return fmt.Errorf("failed parsing flags: %w", err)
+	}
+
+	// Now set the values to the fields
+	for path, flagVal := range flagValues {
+		// Skip the default
+		if *flagVal == "" {
+			continue
+		}
+		// Make short use same field
+		path = strings.TrimSuffix(path, "-short")
+
+		field := fields[path]
+
+		switch field.Kind {
+		case reflect.String:
+			field.Value.SetString(*flagVal)
+		case reflect.Int:
+			intVal, err := strconv.ParseInt(*flagVal, 10, 64)
+			if err != nil {
+				allErrs.Errors = append(allErrs.Errors, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetInt(intVal)
+		default:
+			allErrs.Errors = append(allErrs.Errors, fmt.Errorf("cannot set %s: unimplemented kind %s", field.Path, field.Kind))
+		}
+	}
+
+	if len(allErrs.Errors) > 0 {
+		return allErrs
 	}
 	return nil
 }
