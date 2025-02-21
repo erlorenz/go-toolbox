@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"log/slog"
 	"os"
 	"testing"
 
@@ -11,8 +12,9 @@ func TestParse(t *testing.T) {
 	cfg := struct {
 		Version string
 		Author  string `env:"PROGRAM_AUTHOR" desc:"The author of the program"`
-		Port    int    `default:"5000" desc:"The server port"`
-		BaseURL string `default:"http://example.com" env:"API_URL" short:"p" desc:"The API base URL"`
+		Port    int    `default:"5000" short:"p" desc:"The server port"`
+		BaseURL string `default:"http://example.com" env:"API_URL" desc:"The API base URL"`
+		Debug   bool   `default:"true" short:"d"`
 		Logging struct {
 			Level string `default:"info" desc:"The minimum log level"`
 		}
@@ -20,7 +22,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Defaults", func(t *testing.T) {
 		cfg := cfg
-		_, err := config.Parse(&cfg, config.Options{SkipFlags: true, SkipEnv: true})
+		err := config.Parse(&cfg, config.Options{SkipFlags: true, SkipEnv: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -40,6 +42,9 @@ func TestParse(t *testing.T) {
 		if want := "http://example.com"; cfg.BaseURL != want {
 			t.Errorf("Logging.Level: wanted %s, got %s", want, cfg.BaseURL)
 		}
+		if want := true; cfg.Debug != want {
+			t.Errorf("Debug: wanted %t, got %t", want, cfg.Debug)
+		}
 	})
 
 	t.Run("Envs", func(t *testing.T) {
@@ -51,7 +56,7 @@ func TestParse(t *testing.T) {
 		os.Setenv("VERSION", "error")
 		os.Setenv("API_URL", "http://api.example.com")
 
-		_, err := config.Parse(&cfg, config.Options{SkipFlags: true})
+		err := config.Parse(&cfg, config.Options{SkipFlags: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -71,6 +76,9 @@ func TestParse(t *testing.T) {
 		if want := "http://api.example.com"; cfg.BaseURL != want {
 			t.Errorf("BaseURL: wanted %s, got %s", want, cfg.BaseURL)
 		}
+		if want := true; cfg.Debug != want {
+			t.Errorf("Debug: wanted %t, got %t", want, cfg.Debug)
+		}
 	})
 
 	t.Run("Flags", func(t *testing.T) {
@@ -79,10 +87,11 @@ func TestParse(t *testing.T) {
 		os.Setenv("PORT", "5001")
 		os.Setenv("LOGGING_LEVEL", "debug")
 		os.Setenv("API_URL", "http://api.example.com")
+		os.Setenv("DEBUG", "true")
 
 		args := []string{"-port", "3000", "--logging-level=error", "-author=Jack Smith", "-base-url=http://example.com/api"}
 
-		_, err := config.Parse(&cfg, config.Options{Args: args})
+		err := config.Parse(&cfg, config.Options{Args: args})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,7 +122,7 @@ func TestParse(t *testing.T) {
 
 		args := []string{"-p", "3000", "--logging-level=error", "-author=Jack Smith", "-base-url=http://example.com/api"}
 
-		_, err := config.Parse(&cfg, config.Options{Args: args})
+		err := config.Parse(&cfg, config.Options{Args: args})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,4 +168,33 @@ func TestOptions(t *testing.T) {
 			t.Errorf("wanted %s, got %s", want, cfg.Version)
 		}
 	})
+}
+
+func TestValidate(t *testing.T) {
+
+	t.Run("RequiredTrue", func(t *testing.T) {
+		var cfg struct {
+			Version string `required:"true"`
+		}
+
+		err := config.Parse(&cfg, config.Options{SkipFlags: true, SkipEnv: true})
+		logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		logger.Info("validation errs", "error", err)
+		t.Fatal("dsfa")
+		if err == nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("RequiredFalse", func(t *testing.T) {
+		var cfg struct {
+			Version string `required:"false"`
+		}
+
+		err := config.Parse(&cfg, config.Options{SkipFlags: true, SkipEnv: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
 }

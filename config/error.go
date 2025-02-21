@@ -7,9 +7,9 @@ import (
 
 // ValidationError represents a configuration validation error
 type ValidationError struct {
-	Field  string
-	Value  any
-	Reason string
+	Field  string `json:"field"`
+	Value  any    `json:"value"`
+	Reason string `json:"reason"`
 }
 
 // Error implements the error interface
@@ -19,7 +19,7 @@ func (e *ValidationError) Error() string {
 
 // MultiError holds multiple errors that occurred during parsing
 type MultiError struct {
-	Errors []error
+	Errors []error `json:"errors"`
 }
 
 func (m *MultiError) Error() string {

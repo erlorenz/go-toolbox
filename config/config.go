@@ -54,12 +54,12 @@ type Options struct {
 // 2. Environment variables
 // 3. YAML configuration files
 // 4. Default values from struct tags
-func Parse(cfg any, options Options) (map[string]configField, error) {
+func Parse(cfg any, options Options) error {
 
 	// Make sure it is pointer to struct
 	v := reflect.ValueOf(cfg)
 	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
-		return nil, errors.New("config must be a pointer to a struct")
+		return errors.New("config must be a pointer to a struct")
 	}
 
 	// Set default options and override if non-zero
@@ -71,14 +71,14 @@ func Parse(cfg any, options Options) (map[string]configField, error) {
 
 	// 1. Use the default tags
 	if err := applyDefaults(structMap); err != nil {
-		return structMap, err
+		return err
 	}
 
 	// 2. Override with env vars
 	if !opts.SkipEnv {
 		err := applyEnvs(structMap)
 		if err != nil {
-			return structMap, err
+			return err
 		}
 	}
 
@@ -86,7 +86,7 @@ func Parse(cfg any, options Options) (map[string]configField, error) {
 	if !opts.SkipFlags {
 		err := applyFlags(structMap, opts)
 		if err != nil {
-			return structMap, err
+			return err
 		}
 	}
 
@@ -100,12 +100,12 @@ func Parse(cfg any, options Options) (map[string]configField, error) {
 		}
 	}
 
-	// Validate the configuration
-	// if err := validate(v); err != nil {
-	// 	allErrors.Errors = append(allErrors.Errors, fmt.Errorf("validation: %w", err))
-	// }
+	// Validate the required
+	if err := validateRequired(structMap); err != nil {
+		return fmt.Errorf("validation: %w", err)
+	}
 
-	return structMap, nil
+	return nil
 }
 
 type configField struct {
@@ -171,8 +171,15 @@ func applyDefaults(fields map[string]configField) error {
 			field.Value.SetString(defVal)
 		// Int
 		case reflect.Int:
-			intVal, _ := strconv.ParseInt(defVal, 10, 64)
+			intVal, err := strconv.ParseInt(defVal, 10, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
 			field.Value.SetInt(intVal)
+		case reflect.Bool:
+			boolVal, _ := strconv.ParseBool(defVal)
+			field.Value.SetBool(boolVal)
 		default:
 			allErrs = append(allErrs, fmt.Errorf("cannot set %s: unimplemented kind %s", field.Path, field.Kind))
 		}
@@ -195,6 +202,7 @@ func applyEnvs(fields map[string]configField) error {
 			envName = tagVal
 		}
 
+		// Get value from env
 		envVal, ok := os.LookupEnv(envName)
 		if !ok {
 			continue
@@ -212,6 +220,10 @@ func applyEnvs(fields map[string]configField) error {
 				break
 			}
 			field.Value.SetInt(intVal)
+		// Bool
+		case reflect.Bool:
+			boolVal, _ := strconv.ParseBool(envVal)
+			field.Value.SetBool(boolVal)
 		default:
 			allErrs = append(allErrs, fmt.Errorf("cannot set %s: unimplemented kind %s", field.Path, field.Kind))
 		}
@@ -224,12 +236,12 @@ func applyEnvs(fields map[string]configField) error {
 }
 
 func applyFlags(fields map[string]configField, opts Options) error {
-	allErrs := &MultiError{}
+	var allErrs []error
 
 	flags := flag.NewFlagSet(opts.ProgramName, opts.ErrorHandling)
 
-	// Temporary flag map of string values
-	flagValues := map[string]*string{}
+	// Temporary flag map of pointers to values
+	flagValues := map[string]any{}
 
 	// Load the flagValues map with the flag values
 	for path, field := range fields {
@@ -241,9 +253,22 @@ func applyFlags(fields map[string]configField, opts Options) error {
 			flagName = tagVal
 		}
 
-		flagValues[path] = flags.String(flagName, "", field.Description)
-		if shortFlagName != "" {
-			flagValues[path+"-short"] = flags.String(shortFlagName, "", field.Description)
+		switch field.Kind {
+		case reflect.String:
+			flagValues[path] = flags.String(flagName, "", field.Description)
+			if shortFlagName != "" {
+				flagValues[path+"-short"] = flags.String(shortFlagName, "", field.Description)
+			}
+		case reflect.Int:
+			flagValues[path] = flags.Int(flagName, 0, field.Description)
+			if shortFlagName != "" {
+				flagValues[path+"-short"] = flags.Int(shortFlagName, 0, field.Description)
+			}
+		case reflect.Bool:
+			flagValues[path] = flags.Bool(flagName, false, field.Description)
+			if shortFlagName != "" {
+				flagValues[path+"-short"] = flags.Bool(shortFlagName, false, field.Description)
+			}
 		}
 
 	}
@@ -254,33 +279,47 @@ func applyFlags(fields map[string]configField, opts Options) error {
 	}
 
 	// Now set the values to the fields
-	for path, flagVal := range flagValues {
+	for path, flagValPtr := range flagValues {
 		// Skip the default
-		if *flagVal == "" {
+		flagVal := reflect.ValueOf(flagValPtr).Elem()
+		if flagVal.IsZero() {
 			continue
 		}
+
 		// Make short use same field
 		path = strings.TrimSuffix(path, "-short")
 
 		field := fields[path]
+		field.Value.Set(flagVal)
+	}
 
-		switch field.Kind {
-		case reflect.String:
-			field.Value.SetString(*flagVal)
-		case reflect.Int:
-			intVal, err := strconv.ParseInt(*flagVal, 10, 64)
-			if err != nil {
-				allErrs.Errors = append(allErrs.Errors, fmt.Errorf("cannot set %s: %w", field.Path, err))
-				break
-			}
-			field.Value.SetInt(intVal)
-		default:
-			allErrs.Errors = append(allErrs.Errors, fmt.Errorf("cannot set %s: unimplemented kind %s", field.Path, field.Kind))
+	if len(allErrs) > 0 {
+		return &MultiError{allErrs}
+	}
+	return nil
+}
+
+func validateRequired(fields map[string]configField) error {
+	var allErrs []error
+
+	for path, field := range fields {
+		// Get required tag
+		reqVal, exists := field.Tag.Lookup("required")
+
+		// Skip if not required
+		notRequired := !exists || (exists && reqVal == "false")
+		if notRequired {
+			continue
+		}
+
+		// If it is required and zero value add error
+		if field.Value.IsZero() {
+			allErrs = append(allErrs, fmt.Errorf("%s is required", path))
 		}
 	}
 
-	if len(allErrs.Errors) > 0 {
-		return allErrs
+	if len(allErrs) > 0 {
+		return &MultiError{allErrs}
 	}
 	return nil
 }
