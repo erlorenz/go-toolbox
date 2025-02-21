@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"maps"
 	"os"
 	"reflect"
@@ -30,9 +31,13 @@ const (
 	// validateTag    = "validate" // Validation rules
 )
 
+var (
+	ErrConfigNotPointerToStruct = errors.New("config must be a pointer to a struct")
+)
+
 // Options holds options for the Parse function.
 type Options struct {
-	// ProgramName is used in usage messages for command line flags
+	// ProgramName is used in usage messages for command line flags (defaults to os.Args[0])
 	ProgramName string
 	// EnvPrefix is prefixed to environment variable names (unless overridden by tags)
 	EnvPrefix string
@@ -44,7 +49,7 @@ type Options struct {
 	Args []string
 	// ErrorHandling determines how parsing errors are handled
 	ErrorHandling flag.ErrorHandling
-	// UseBuildInfo uses debug.BuildInfo to set the Version property to the git tag.
+	// UseBuildInfo uses debug.BuildInfo to set the Version property to the git tag
 	UseBuildInfo bool
 }
 
@@ -56,29 +61,29 @@ type Options struct {
 // 4. Default values from struct tags
 func Parse(cfg any, options Options) error {
 
-	// Make sure it is pointer to struct
-	v := reflect.ValueOf(cfg)
-	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
-		return errors.New("config must be a pointer to a struct")
-	}
-
 	// Set default options and override if non-zero
 	opts := setOptions(options)
 
-	// Walk the concrete struct
+	// Make sure it is pointer to struct
+	v := reflect.ValueOf(cfg)
+	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
+		return handleError(opts.ErrorHandling, ErrConfigNotPointerToStruct)
+	}
+
+	// Walk the struct and get map of paths with dot notation
 	// Skips any fields that are already populated
 	structMap := walkStruct(v.Elem(), "")
 
 	// 1. Use the default tags
 	if err := applyDefaults(structMap); err != nil {
-		return err
+		return handleError(opts.ErrorHandling, err)
 	}
 
 	// 2. Override with env vars
 	if !opts.SkipEnv {
-		err := applyEnvs(structMap)
+		err := applyEnvs(structMap, opts.EnvPrefix)
 		if err != nil {
-			return err
+			return handleError(opts.ErrorHandling, err)
 		}
 	}
 
@@ -86,7 +91,7 @@ func Parse(cfg any, options Options) error {
 	if !opts.SkipFlags {
 		err := applyFlags(structMap, opts)
 		if err != nil {
-			return err
+			return handleError(opts.ErrorHandling, err)
 		}
 	}
 
@@ -102,7 +107,7 @@ func Parse(cfg any, options Options) error {
 
 	// Validate the required
 	if err := validateRequired(structMap); err != nil {
-		return fmt.Errorf("validation: %w", err)
+		return handleError(opts.ErrorHandling, fmt.Errorf("validation: %w", err))
 	}
 
 	return nil
@@ -190,11 +195,16 @@ func applyDefaults(fields map[string]configField) error {
 	return nil
 }
 
-func applyEnvs(fields map[string]configField) error {
+func applyEnvs(fields map[string]configField, prefix string) error {
 	var allErrs []error
 
 	for _, field := range fields {
+
 		envName := toScreamingSnakeCase(field.Path)
+		// Add prefix
+		if prefix != "" {
+			envName = prefix + "_" + envName
+		}
 
 		// Overwrite with tag
 		tagVal, ok := field.Tag.Lookup(envTag)
@@ -322,4 +332,15 @@ func validateRequired(fields map[string]configField) error {
 		return &MultiError{allErrs}
 	}
 	return nil
+}
+
+func handleError(errHandling flag.ErrorHandling, err error) error {
+	if errHandling == flag.ExitOnError {
+		log.Fatal(err)
+	}
+	if errHandling == flag.PanicOnError {
+		panic(err)
+	}
+
+	return err
 }

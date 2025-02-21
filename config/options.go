@@ -5,25 +5,22 @@ import (
 	"os"
 )
 
-// DefaultConfigOptions returns the default configuration options
-func DefaultConfigOptions() Options {
-	opts := Options{
-		ProgramName:   os.Args[0],
-		EnvPrefix:     "",
-		SkipFlags:     false,
-		SkipEnv:       false,
-		Args:          os.Args[1:],
-		ErrorHandling: flag.ContinueOnError,
-		UseBuildInfo:  false,
-	}
-
-	return opts
+// DefaultConfigOptions are the default set of configuration options.
+// Each option can be overridden.
+var DefaultConfigOptions = Options{
+	ProgramName:   os.Args[0],
+	EnvPrefix:     "",
+	SkipFlags:     false,
+	SkipEnv:       false,
+	Args:          os.Args[1:],
+	ErrorHandling: flag.ContinueOnError,
+	UseBuildInfo:  false,
 }
 
 func setOptions(options Options) Options {
 
 	// Start with default options, then override with provided values
-	opts := DefaultConfigOptions()
+	opts := DefaultConfigOptions
 
 	// Only override non-zero values from the provided options
 	if options.ProgramName != "" {
@@ -42,10 +39,10 @@ func setOptions(options Options) Options {
 	if options.UseBuildInfo {
 		opts.UseBuildInfo = true
 	}
-	if len(options.Args) > 0 {
+	if options.Args != nil {
 		opts.Args = options.Args
 	}
-	if options.ErrorHandling != 0 {
+	if options.ErrorHandling != flag.ContinueOnError {
 		opts.ErrorHandling = options.ErrorHandling
 	}
 

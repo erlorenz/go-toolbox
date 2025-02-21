@@ -19,12 +19,13 @@ func main() {
 		Debug bool   `short:"d"`
 	}
 
-	os.Setenv("ENVIRONMENT", "development")
-	os.Setenv("BASE_URL", "http://example.com") // comment out for rquired error
-	args := []string{"-d"}
+	os.Setenv("APP_ENVIRONMENT", "development") //  prefix APP
+	os.Setenv("BASE_URL", "http://example.com") // comment out for required error
+	args := []string{"-d"}                      // short flag
 
 	if err := config.Parse(&cfg, config.Options{
 		UseBuildInfo: true,
+		EnvPrefix:    "APP",
 		Args:         args,
 	}); err != nil {
 		log.Fatal(err)

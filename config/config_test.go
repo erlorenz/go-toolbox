@@ -1,7 +1,6 @@
 package config_test
 
 import (
-	"log/slog"
 	"os"
 	"testing"
 
@@ -21,6 +20,7 @@ func TestParse(t *testing.T) {
 	}{Version: "v10.0.0"}
 
 	t.Run("Defaults", func(t *testing.T) {
+
 		cfg := cfg
 		err := config.Parse(&cfg, config.Options{SkipFlags: true, SkipEnv: true})
 		if err != nil {
@@ -46,8 +46,43 @@ func TestParse(t *testing.T) {
 			t.Errorf("Debug: wanted %t, got %t", want, cfg.Debug)
 		}
 	})
+	t.Run("EnvsPrefixed", func(t *testing.T) {
+
+		cfg := cfg
+
+		os.Setenv("PROGRAM_AUTHOR", "John Deere") // Should use tag
+		os.Setenv("APP_PORT", "5001")
+		os.Setenv("APP_LOGGING_LEVEL", "debug")
+		os.Setenv("VERSION", "error") // Should skip
+		os.Setenv("API_URL", "http://api.example.com")
+
+		err := config.Parse(&cfg, config.Options{SkipFlags: true, EnvPrefix: "APP"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if want := "John Deere"; cfg.Author != want {
+			t.Errorf("Author: wanted %s, got %s", want, cfg.Author)
+		}
+		if want := "v10.0.0"; cfg.Version != want {
+			t.Errorf("Version: wanted %s, got %s", want, cfg.Version)
+		}
+		if want := 5001; cfg.Port != want {
+			t.Errorf("Port: wanted %d, got %d", want, cfg.Port)
+		}
+		if want := "debug"; cfg.Logging.Level != want {
+			t.Errorf("Logging.Level: wanted %s, got %s", want, cfg.Logging.Level)
+		}
+		if want := "http://api.example.com"; cfg.BaseURL != want {
+			t.Errorf("BaseURL: wanted %s, got %s", want, cfg.BaseURL)
+		}
+		if want := true; cfg.Debug != want {
+			t.Errorf("Debug: wanted %t, got %t", want, cfg.Debug)
+		}
+	})
 
 	t.Run("Envs", func(t *testing.T) {
+
 		cfg := cfg
 
 		os.Setenv("PROGRAM_AUTHOR", "John Deere")
@@ -146,6 +181,7 @@ func TestParse(t *testing.T) {
 }
 
 func TestOptions(t *testing.T) {
+	t.Parallel()
 
 	cfg := struct {
 		Version string
@@ -171,16 +207,13 @@ func TestOptions(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-
+	t.Parallel()
 	t.Run("RequiredTrue", func(t *testing.T) {
 		var cfg struct {
 			Version string `required:"true"`
 		}
 
 		err := config.Parse(&cfg, config.Options{SkipFlags: true, SkipEnv: true})
-		logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-		logger.Info("validation errs", "error", err)
-		t.Fatal("dsfa")
 		if err == nil {
 			t.Fatal(err)
 		}
@@ -196,5 +229,4 @@ func TestValidate(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-
 }
