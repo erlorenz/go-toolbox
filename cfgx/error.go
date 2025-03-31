@@ -5,23 +5,24 @@ import (
 	"strings"
 )
 
-// ValidationError represents a configuration validation error
+// ValidationError represents a configuration validation error.
 type ValidationError struct {
 	Field  string `json:"field"`
 	Value  any    `json:"value"`
 	Reason string `json:"reason"`
 }
 
-// Error implements the error interface
+// Error implements the error interface.
 func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error for field '%s': %s", e.Field, e.Reason)
 }
 
-// MultiError holds multiple errors that occurred during parsing
+// MultiError holds multiple errors that occurred during parsing.
 type MultiError struct {
 	Errors []error `json:"errors"`
 }
 
+// Error implements error interface.
 func (m *MultiError) Error() string {
 	if len(m.Errors) == 0 {
 		return "no errors"
@@ -32,6 +33,6 @@ func (m *MultiError) Error() string {
 		errMsgs[i] = err.Error()
 	}
 
-	return fmt.Sprintf("%d error(s) occurred:\n- %s",
+	return fmt.Sprintf("%d error(s) occurred parsing config:\n- %s",
 		len(m.Errors), strings.Join(errMsgs, "\n- "))
 }

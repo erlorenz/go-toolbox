@@ -1,8 +1,10 @@
 package cfgx_test
 
 import (
+	"flag"
 	"os"
 	"testing"
+	"testing/fstest"
 
 	"github.com/erlorenz/go-toolbox/cfgx"
 )
@@ -10,7 +12,7 @@ import (
 func TestParse(t *testing.T) {
 	cfg := struct {
 		Version string
-		Author  string `env:"PROGRAM_AUTHOR" desc:"The author of the program"`
+		Author  string `env:"PROGRAM_AUTHOR" optional:"true" desc:"The author of the program"`
 		Port    int    `default:"5000" short:"p" desc:"The server port"`
 		BaseURL string `default:"http://example.com" env:"API_URL" desc:"The API base URL"`
 		Debug   bool   `default:"true" short:"d"`
@@ -178,26 +180,66 @@ func TestParse(t *testing.T) {
 			t.Errorf("BaseURL: wanted %s, got %s", want, cfg.BaseURL)
 		}
 	})
+
+	t.Run("Files", func(t *testing.T) {
+
+		fakeFS := fstest.MapFS{
+			"my_secret": &fstest.MapFile{
+				Data: []byte("supersecret"),
+			},
+			"my_secret_int": &fstest.MapFile{
+				Data: []byte("5"),
+			},
+		}
+
+		var cfg struct {
+			MySecret    string
+			MySecretInt int
+		}
+
+		sfc := &cfgx.FileContentSource{
+			PriorityLevel: 50,
+			Tag:           "file",
+			FS:            fakeFS,
+		}
+
+		err := cfgx.Parse(&cfg, cfgx.Options{
+			SkipFlags: true,
+			SkipEnv:   true,
+			Sources:   []cfgx.Source{sfc},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if want, got := "supersecret", cfg.MySecret; got != want {
+			t.Errorf("MySecret: wanted %s, got %s", want, got)
+		}
+		if want, got := 5, cfg.MySecretInt; want != got {
+			t.Errorf("MySecretInt: wanted %d, got %d", want, got)
+		}
+	})
 }
 
 func TestOptions(t *testing.T) {
 	t.Parallel()
 
-	cfg := struct {
+	type bicfg struct {
 		Version string
-		Author  string `env:"PROGRAM_AUTHOR" desc:"The author of the program"`
+		Author  string `env:"PROGRAM_AUTHOR" optional:"true" desc:"The author of the program"`
 		Port    int    `default:"5000" desc:"The server port"`
 		BaseURL string `default:"http://example.com" env:"API_URL" short:"p" desc:"The API base URL"`
 		Logging struct {
 			Level string `default:"info" desc:"The minimum log level"`
 		}
-	}{}
+	}
 	t.Run("BuildInfo", func(t *testing.T) {
-		cfg := cfg
+		var cfg bicfg
 		cfgx.Parse(&cfg, cfgx.Options{
-			ProgramName:  "The program",
-			UseBuildInfo: true,
-			SkipFlags:    true,
+			ProgramName:   "The program",
+			SkipFlags:     true,
+			SkipEnv:       true,
+			ErrorHandling: flag.PanicOnError,
 		})
 
 		if want := "(devel)"; cfg.Version != want {
@@ -208,9 +250,9 @@ func TestOptions(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	t.Parallel()
-	t.Run("RequiredTrue", func(t *testing.T) {
+	t.Run("OptionalNone", func(t *testing.T) {
 		var cfg struct {
-			Required string `required:"true"`
+			Required string
 		}
 
 		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
@@ -219,13 +261,24 @@ func TestValidate(t *testing.T) {
 		}
 	})
 
-	t.Run("RequiredFalse", func(t *testing.T) {
+	t.Run("OptionalTrue", func(t *testing.T) {
 		var cfg struct {
-			Version string `required:"false"`
+			NotRequired string `optional:"true"`
 		}
 
 		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
 		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("OptionalFalse", func(t *testing.T) {
+		var cfg struct {
+			NotRequired string `optional:"false"`
+		}
+
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
+		if err == nil {
 			t.Fatal(err)
 		}
 	})

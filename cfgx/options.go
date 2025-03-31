@@ -14,7 +14,6 @@ var DefaultConfigOptions = Options{
 	SkipEnv:       false,
 	Args:          os.Args[1:],
 	ErrorHandling: flag.ContinueOnError,
-	UseBuildInfo:  true,
 	Sources:       []Source{},
 }
 
@@ -27,6 +26,7 @@ func setOptions(options Options) Options {
 	if options.ProgramName != "" {
 		opts.ProgramName = options.ProgramName
 	}
+
 	if options.EnvPrefix != "" {
 		opts.EnvPrefix = options.EnvPrefix
 	}
@@ -34,17 +34,21 @@ func setOptions(options Options) Options {
 	if options.SkipFlags {
 		opts.SkipFlags = true
 	}
+
 	if options.SkipEnv {
 		opts.SkipEnv = true
 	}
-	if options.UseBuildInfo {
-		opts.UseBuildInfo = true
-	}
+
 	if options.Args != nil {
 		opts.Args = options.Args
 	}
+
 	if options.ErrorHandling != flag.ContinueOnError {
 		opts.ErrorHandling = options.ErrorHandling
+	}
+
+	if len(options.Sources) > 0 {
+		opts.Sources = append(opts.Sources, options.Sources...)
 	}
 
 	return opts
