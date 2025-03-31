@@ -1,10 +1,10 @@
-package config_test
+package cfgx_test
 
 import (
 	"os"
 	"testing"
 
-	"github.com/erlorenz/go-toolbox/config"
+	"github.com/erlorenz/go-toolbox/cfgx"
 )
 
 func TestParse(t *testing.T) {
@@ -22,7 +22,7 @@ func TestParse(t *testing.T) {
 	t.Run("Defaults", func(t *testing.T) {
 
 		cfg := cfg
-		err := config.Parse(&cfg, config.Options{SkipFlags: true, SkipEnv: true})
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,7 +56,7 @@ func TestParse(t *testing.T) {
 		os.Setenv("VERSION", "error") // Should skip
 		os.Setenv("API_URL", "http://api.example.com")
 
-		err := config.Parse(&cfg, config.Options{SkipFlags: true, EnvPrefix: "APP"})
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, EnvPrefix: "APP"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +91,7 @@ func TestParse(t *testing.T) {
 		os.Setenv("VERSION", "error")
 		os.Setenv("API_URL", "http://api.example.com")
 
-		err := config.Parse(&cfg, config.Options{SkipFlags: true})
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func TestParse(t *testing.T) {
 
 		args := []string{"-port", "3000", "--logging-level=error", "-author=Jack Smith", "-base-url=http://example.com/api"}
 
-		err := config.Parse(&cfg, config.Options{Args: args})
+		err := cfgx.Parse(&cfg, cfgx.Options{Args: args})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -157,7 +157,7 @@ func TestParse(t *testing.T) {
 
 		args := []string{"-p", "3000", "--logging-level=error", "-author=Jack Smith", "-base-url=http://example.com/api"}
 
-		err := config.Parse(&cfg, config.Options{Args: args})
+		err := cfgx.Parse(&cfg, cfgx.Options{Args: args})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,7 +194,7 @@ func TestOptions(t *testing.T) {
 	}{}
 	t.Run("BuildInfo", func(t *testing.T) {
 		cfg := cfg
-		config.Parse(&cfg, config.Options{
+		cfgx.Parse(&cfg, cfgx.Options{
 			ProgramName:  "The program",
 			UseBuildInfo: true,
 			SkipFlags:    true,
@@ -210,10 +210,10 @@ func TestValidate(t *testing.T) {
 	t.Parallel()
 	t.Run("RequiredTrue", func(t *testing.T) {
 		var cfg struct {
-			Version string `required:"true"`
+			Required string `required:"true"`
 		}
 
-		err := config.Parse(&cfg, config.Options{SkipFlags: true, SkipEnv: true})
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
 		if err == nil {
 			t.Fatal(err)
 		}
@@ -224,7 +224,7 @@ func TestValidate(t *testing.T) {
 			Version string `required:"false"`
 		}
 
-		err := config.Parse(&cfg, config.Options{SkipFlags: true, SkipEnv: true})
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
 		if err != nil {
 			t.Fatal(err)
 		}

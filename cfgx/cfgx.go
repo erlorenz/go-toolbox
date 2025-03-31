@@ -1,10 +1,10 @@
-// Package config provides functionality to parse configuration from multiple sources
+// Package cfgx provides functionality to parse configuration from multiple sources
 // in a predictable precedence order with strong error handling and traceability.
 // It is designed to be flexible enough for most applications while providing
 // sensible defaults that follow Go idioms and best practices.
 // with a defined precedence: command line args > environment variables > yaml files > defaults.
 // It uses struct tags to customize field names and validation rules.
-package config
+package cfgx
 
 import (
 	"cmp"
@@ -32,25 +32,34 @@ const (
 )
 
 var (
-	ErrConfigNotPointerToStruct = errors.New("config must be a pointer to a struct")
+	ErrNotPointerToStruct = errors.New("config must be a pointer to a struct")
 )
+
+// Source processes the configField map and applies values to the
+// config struct. Choose a priority to process before or after other sources.
+type Source interface {
+	Priority() int
+	Process(map[string]configField) error
+}
 
 // Options holds options for the Parse function.
 type Options struct {
-	// ProgramName is used in usage messages for command line flags (defaults to os.Args[0])
+	// ProgramName is the name of the running program (defaults to os.Args[0]).
 	ProgramName string
-	// EnvPrefix is prefixed to environment variable names (unless overridden by tags)
+	// EnvPrefix looks adds a prefix to environment variable lookups.
 	EnvPrefix string
-	// SkipFlags indicates whether to skip parsing command line flags
+	// SkipFlags ignores command line flags.
 	SkipFlags bool
-	// SkipEnv indicates whether to skip parsing environment variables
+	// SkipEnv ignores environment variables.
 	SkipEnv bool
-	// Args provides command line arguments (defaults to os.Args[1:])
+	// Args provides command line arguments (defaults to os.Args[1:]).
 	Args []string
-	// ErrorHandling determines how parsing errors are handled
+	// ErrorHandling determines how parsing errors are handled.
 	ErrorHandling flag.ErrorHandling
-	// UseBuildInfo uses debug.BuildInfo to set the Version property to the git tag
+	// UseBuildInfo uses debug.BuildInfo to set the Version property to the git tag.
 	UseBuildInfo bool
+	// Sources adds additional sources.
+	Sources []Source
 }
 
 // Parse populates the config struct from different sources.
@@ -67,7 +76,7 @@ func Parse(cfg any, options Options) error {
 	// Make sure it is pointer to struct
 	v := reflect.ValueOf(cfg)
 	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
-		return handleError(opts.ErrorHandling, ErrConfigNotPointerToStruct)
+		return handleError(opts.ErrorHandling, ErrNotPointerToStruct)
 	}
 
 	// Walk the struct and get map of paths with dot notation
@@ -128,7 +137,7 @@ func walkStruct(v reflect.Value, currPath string) map[string]configField {
 
 	t := v.Type()
 
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		// Get values
 		fieldVal := v.Field(i)
 		structField := t.Field(i)

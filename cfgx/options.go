@@ -1,4 +1,4 @@
-package config
+package cfgx
 
 import (
 	"flag"
@@ -14,7 +14,8 @@ var DefaultConfigOptions = Options{
 	SkipEnv:       false,
 	Args:          os.Args[1:],
 	ErrorHandling: flag.ContinueOnError,
-	UseBuildInfo:  false,
+	UseBuildInfo:  true,
+	Sources:       []Source{},
 }
 
 func setOptions(options Options) Options {

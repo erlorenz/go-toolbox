@@ -1,0 +1,16 @@
+[tasks."test:cfgx"]
+description = "Test cfgx package"
+run = "go test ./cfgx"
+
+[tasks."test:enumgen"]
+description = "Test enumgen package"
+run = "go test ./enumgen"
+
+[tasks."test:all"]
+description = "Test all the packages"
+depends = ["test:cfgx", "test:enumgen"]
+
+
+[tasks.gencfgx]
+description = "Generate single file for cfgx"
+

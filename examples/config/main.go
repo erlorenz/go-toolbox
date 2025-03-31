@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/erlorenz/go-toolbox/config"
+	"github.com/erlorenz/go-toolbox/cfgx"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 	os.Setenv("BASE_URL", "http://example.com") // comment out for required error
 	args := []string{"-d"}                      // short flag
 
-	if err := config.Parse(&cfg, config.Options{
+	if err := cfgx.Parse(&cfg, cfgx.Options{
 		UseBuildInfo:  true,
 		EnvPrefix:     "APP",
 		Args:          args,
