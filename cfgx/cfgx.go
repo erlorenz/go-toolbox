@@ -122,10 +122,7 @@ func Parse(cfg any, options Options) error {
 
 	// Sort and call Process on each source
 	slices.SortFunc(sources, func(a, b Source) int {
-		if a.Priority() < b.Priority() {
-			return -1
-		}
-		return 1
+		return cmp.Compare(a.Priority(), b.Priority())
 	})
 
 	for _, source := range sources {

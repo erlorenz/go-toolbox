@@ -20,9 +20,9 @@ type TypeInfo struct {
 
 // EnumValue represents a single enum value with its constant name and display name
 type EnumValue struct {
-	ConstName   string      // The constant name in PascalCase
-	Value       interface{} // The internal value (string or int)
-	DisplayName string      // The human-readable display name
+	ConstName   string // The constant name in PascalCase
+	Value       any    // The internal value (string or int)
+	DisplayName string // The human-readable display name
 }
 
 // TemplateData holds all the data needed for code generation
