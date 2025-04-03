@@ -11,6 +11,10 @@ import (
 	"strings"
 )
 
+const (
+	dockerPath = "/run/secrets"
+)
+
 // Default ===================================================================
 type defaultSource struct {
 	priority int
@@ -190,21 +194,48 @@ func (s *flagSource) Process(fields map[string]ConfigField) error {
 // ====================================================================
 // Docker Secrets
 
-// DockerSecretsSource is a [FileContentSource].
-// It reads the docker secret file at "/run/secrets/<secret_name>".
+// DockerSecretsSource wraps a [FileContentSource].
+// It reads the docker secret file at “/run/secrets/<secret_name>“.
 // It defaults to snake case based on the struct path.
 // Override the name with the tag "dsec".
-var DockerSecretsSource = FileContentSource{
-	PriorityLevel: 75,
-	Tag:           tagDockerSecret,
-	FS:            os.DirFS("/run/secrets"),
+type DockerSecretsSource struct {
+	SecretsPath string
+	FileContentSource
+}
+
+// Process opens an [os.Root] and calls the underlying [FileContentSource]'s
+// Process method with the [os.Root.FS].
+func (s *DockerSecretsSource) Process(structMap map[string]ConfigField) error {
+	root, err := os.OpenRoot(s.SecretsPath)
+	if err != nil {
+		return fmt.Errorf("open docker path: %w", err)
+	}
+	defer root.Close()
+
+	s.FileContentSource.FS = root.FS()
+	return s.FileContentSource.Process(structMap)
+}
+
+// NewDockerSecretsSource sets a priority of 75, a tag of "dsec",
+// and a secrets path of `/run/secrets`.
+func NewDockerSecretsSource() *DockerSecretsSource {
+	return &DockerSecretsSource{
+		SecretsPath: dockerPath,
+		FileContentSource: FileContentSource{
+			PriorityLevel: 75,
+			Tag:           tagDockerSecret,
+			// Assign the fs.FS in the Process method so we can use os.Root.
+		},
+	}
 }
 
 // FileContentSource reads individual files.
 // It can be used for any files that live in the same directory
 // or have explicit file locations.
 // Do not use this directly, use one of the
-// implementations, e.g. SourceDockerSecrets.
+// implementations, e.g. DockerSecretsSource.
+// This allows to use an [os.Root.FS] in the implementation's
+// Process method.
 type FileContentSource struct {
 	PriorityLevel int
 	Tag           string
