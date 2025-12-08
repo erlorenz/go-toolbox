@@ -1,11 +1,11 @@
-package cfgx
+package casing
 
 import (
 	"strings"
 	"unicode"
 )
 
-func toSnakeCase(s string) string {
+func ToSnake(s string) string {
 
 	r := []rune(s)
 
@@ -52,10 +52,10 @@ func toSnakeCase(s string) string {
 	return str.String()
 }
 
-func toScreamingSnakeCase(s string) string {
-	return strings.ToUpper(toSnakeCase(s))
+func ToScreamingSnake(s string) string {
+	return strings.ToUpper(ToSnake(s))
 }
 
-func toKebabCase(s string) string {
-	return strings.ReplaceAll(toSnakeCase(s), "_", "-")
+func ToKebab(s string) string {
+	return strings.ReplaceAll(ToSnake(s), "_", "-")
 }

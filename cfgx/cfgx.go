@@ -31,6 +31,15 @@ const (
 	tagDockerSecret = "dsec" // Optional
 )
 
+// Priority levels for built-in sources. Custom sources can use any priority value.
+// Higher priority sources override lower priority sources.
+const (
+	PriorityDefault = 0   // Default values from struct tags
+	PriorityEnv     = 50  // Environment variables
+	PrioritySecrets = 75  // Docker secrets and other file-based secrets
+	PriorityFlags   = 100 // Command-line flags
+)
+
 var (
 	ErrNotPointerToStruct = errors.New("config must be a pointer to a struct")
 )
@@ -89,12 +98,12 @@ func Parse(cfg any, options Options) error {
 	var sources []Source
 
 	// Set default tags source
-	sources = append(sources, &defaultSource{priority: 0})
+	sources = append(sources, &defaultSource{priority: PriorityDefault})
 
 	// Set environment variables source
 	if !opts.SkipEnv {
 		sources = append(sources, &envSource{
-			priority: 50,
+			priority: PriorityEnv,
 			prefix:   options.EnvPrefix,
 		})
 	}
@@ -102,7 +111,7 @@ func Parse(cfg any, options Options) error {
 	//  Set command flags source
 	if !opts.SkipFlags {
 		sources = append(sources, &flagSource{
-			priority: 100,
+			priority: PriorityFlags,
 			opts:     options,
 		})
 	}
@@ -117,7 +126,7 @@ func Parse(cfg any, options Options) error {
 	if version, ok := structMap["Version"]; ok {
 		bi, _ := debug.ReadBuildInfo()
 
-		version.Value.SetString(cmp.Or(bi.Main.Version, "(develop)"))
+		version.Value.SetString(cmp.Or(bi.Main.Version, "(devel)"))
 	}
 
 	// Sort and call Process on each source

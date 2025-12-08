@@ -2,15 +2,30 @@
 description = "Test cfgx package"
 run = "go test ./cfgx"
 
-[tasks."test:enumgen"]
-description = "Test enumgen package"
-run = "go test ./enumgen"
-
 [tasks."test:all"]
 description = "Test all the packages"
-depends = ["test:cfgx", "test:enumgen"]
+depends = ["test:cfgx"]
 
+[tasks.lint]
+description = "Run linters on the codebase"
+run = [
+    "go vet ./...",
+    "staticcheck ./...",
+    "gofmt -l .",
+]
 
-[tasks.gencfgx]
-description = "Generate single file for cfgx"
+[tasks.audit]
+description = "Run security and dependency audits"
+run = [
+    "go mod verify",
+    "go mod tidy -diff",
+    "go run golang.org/x/vuln/cmd/govulncheck@latest ./...",
+]
 
+[tasks.pre-push]
+description = "Run all checks before pushing (sequential)"
+run = [
+    "mise run lint",
+    "mise run audit",
+    "mise run test:all",
+]

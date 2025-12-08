@@ -1,4 +1,4 @@
-package cfgx
+package casing
 
 import "testing"
 
@@ -19,7 +19,7 @@ func TestSnake(t *testing.T) {
 
 	for in, want := range table {
 		t.Run(in, func(t *testing.T) {
-			got := toSnakeCase(in)
+			got := ToSnake(in)
 			if want != got {
 				t.Errorf("wanted %s, got %s", want, got)
 			}
@@ -43,7 +43,7 @@ func TestScreamingSnake(t *testing.T) {
 
 	for in, want := range table {
 		t.Run(in, func(t *testing.T) {
-			got := toScreamingSnakeCase(in)
+			got := ToScreamingSnake(in)
 			if want != got {
 				t.Errorf("wanted %s, got %s", want, got)
 			}
@@ -67,7 +67,7 @@ func TestKebab(t *testing.T) {
 
 	for in, want := range table {
 		t.Run(in, func(t *testing.T) {
-			got := toKebabCase(in)
+			got := ToKebab(in)
 			if want != got {
 				t.Errorf("wanted %s, got %s", want, got)
 			}

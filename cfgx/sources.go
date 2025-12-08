@@ -9,10 +9,14 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/erlorenz/go-toolbox/cfgx/internal/casing"
 )
 
 const (
-	dockerPath = "/run/secrets"
+	dockerPath     = "/run/secrets"
+	maxSecretSize  = 1 << 20 // 1MB - max size for secret files
 )
 
 // Default ===================================================================
@@ -33,6 +37,17 @@ func (s *defaultSource) Process(fields map[string]ConfigField) error {
 			continue
 		}
 
+		// Handle time.Duration specially (it's an int64 alias)
+		if field.Value.Type() == reflect.TypeOf(time.Duration(0)) {
+			d, err := time.ParseDuration(defVal)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot parse duration %s: %w", field.Path, err))
+				continue
+			}
+			field.Value.Set(reflect.ValueOf(d))
+			continue
+		}
+
 		switch field.Kind {
 		// String
 		case reflect.String:
@@ -45,6 +60,27 @@ func (s *defaultSource) Process(fields map[string]ConfigField) error {
 				break
 			}
 			field.Value.SetInt(intVal)
+		case reflect.Int64:
+			intVal, err := strconv.ParseInt(defVal, 10, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetInt(intVal)
+		case reflect.Uint:
+			uintVal, err := strconv.ParseUint(defVal, 10, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetUint(uintVal)
+		case reflect.Float64:
+			floatVal, err := strconv.ParseFloat(defVal, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetFloat(floatVal)
 		case reflect.Bool:
 			boolVal, _ := strconv.ParseBool(defVal)
 			field.Value.SetBool(boolVal)
@@ -73,7 +109,7 @@ func (s *envSource) Process(fields map[string]ConfigField) error {
 
 	for _, field := range fields {
 
-		envName := toScreamingSnakeCase(field.Path)
+		envName := casing.ToScreamingSnake(field.Path)
 		// Add prefix
 		if s.prefix != "" {
 			envName = s.prefix + "_" + envName
@@ -91,6 +127,17 @@ func (s *envSource) Process(fields map[string]ConfigField) error {
 			continue
 		}
 
+		// Handle time.Duration specially (it's an int64 alias)
+		if field.Value.Type() == reflect.TypeOf(time.Duration(0)) {
+			d, err := time.ParseDuration(envVal)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot parse duration %s: %w", field.Path, err))
+				continue
+			}
+			field.Value.Set(reflect.ValueOf(d))
+			continue
+		}
+
 		switch field.Kind {
 		// String
 		case reflect.String:
@@ -103,6 +150,27 @@ func (s *envSource) Process(fields map[string]ConfigField) error {
 				break
 			}
 			field.Value.SetInt(intVal)
+		case reflect.Int64:
+			intVal, err := strconv.ParseInt(envVal, 10, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetInt(intVal)
+		case reflect.Uint:
+			uintVal, err := strconv.ParseUint(envVal, 10, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetUint(uintVal)
+		case reflect.Float64:
+			floatVal, err := strconv.ParseFloat(envVal, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetFloat(floatVal)
 		// Bool
 		case reflect.Bool:
 			boolVal, _ := strconv.ParseBool(envVal)
@@ -137,12 +205,21 @@ func (s *flagSource) Process(fields map[string]ConfigField) error {
 
 	// Load the flagValues map with the flag values
 	for path, field := range fields {
-		flagName := toKebabCase(field.Path)
+		flagName := casing.ToKebab(field.Path)
 		shortFlagName := field.Tag.Get(tagShort)
 
 		// Overwrite with tag
 		if tagVal, ok := field.Tag.Lookup(tagFlag); ok {
 			flagName = tagVal
+		}
+
+		// Handle time.Duration specially
+		if field.Value.Type() == reflect.TypeOf(time.Duration(0)) {
+			flagValues[path] = flags.Duration(flagName, 0, field.Description)
+			if shortFlagName != "" {
+				flagValues[path+"-short"] = flags.Duration(shortFlagName, 0, field.Description)
+			}
+			continue
 		}
 
 		switch field.Kind {
@@ -155,6 +232,21 @@ func (s *flagSource) Process(fields map[string]ConfigField) error {
 			flagValues[path] = flags.Int(flagName, 0, field.Description)
 			if shortFlagName != "" {
 				flagValues[path+"-short"] = flags.Int(shortFlagName, 0, field.Description)
+			}
+		case reflect.Int64:
+			flagValues[path] = flags.Int64(flagName, 0, field.Description)
+			if shortFlagName != "" {
+				flagValues[path+"-short"] = flags.Int64(shortFlagName, 0, field.Description)
+			}
+		case reflect.Uint:
+			flagValues[path] = flags.Uint(flagName, 0, field.Description)
+			if shortFlagName != "" {
+				flagValues[path+"-short"] = flags.Uint(shortFlagName, 0, field.Description)
+			}
+		case reflect.Float64:
+			flagValues[path] = flags.Float64(flagName, 0, field.Description)
+			if shortFlagName != "" {
+				flagValues[path+"-short"] = flags.Float64(shortFlagName, 0, field.Description)
 			}
 		case reflect.Bool:
 			flagValues[path] = flags.Bool(flagName, false, field.Description)
@@ -216,13 +308,13 @@ func (s *DockerSecretsSource) Process(structMap map[string]ConfigField) error {
 	return s.FileContentSource.Process(structMap)
 }
 
-// NewDockerSecretsSource sets a priority of 75, a tag of "dsec",
+// NewDockerSecretsSource sets a priority of PrioritySecrets (75), a tag of "dsec",
 // and a secrets path of `/run/secrets`.
 func NewDockerSecretsSource() *DockerSecretsSource {
 	return &DockerSecretsSource{
 		SecretsPath: dockerPath,
 		FileContentSource: FileContentSource{
-			PriorityLevel: 75,
+			PriorityLevel: PrioritySecrets,
 			Tag:           tagDockerSecret,
 			// Assign the fs.FS in the Process method so we can use os.Root.
 		},
@@ -257,7 +349,7 @@ func (s *FileContentSource) Process(structMap map[string]ConfigField) error {
 
 	for name, field := range structMap {
 
-		secretName := toSnakeCase(name)
+		secretName := casing.ToSnake(name)
 
 		// override name
 		tagVal, ok := field.Tag.Lookup(s.Tag)
@@ -272,12 +364,29 @@ func (s *FileContentSource) Process(structMap map[string]ConfigField) error {
 		}
 		defer file.Close()
 
-		b, err := io.ReadAll(file)
+		// Limit read size to prevent memory exhaustion
+		limitedReader := io.LimitReader(file, maxSecretSize+1)
+		b, err := io.ReadAll(limitedReader)
 		if err != nil {
 			allErrs = append(allErrs, fmt.Errorf("cannot read file %s: %w", secretName, err))
 			continue
 		}
-		secretVal := string(b)
+		if len(b) > maxSecretSize {
+			allErrs = append(allErrs, fmt.Errorf("file %s exceeds max size of %d bytes", secretName, maxSecretSize))
+			continue
+		}
+		secretVal := strings.TrimSpace(string(b))
+
+		// Handle time.Duration specially (it's an int64 alias)
+		if field.Value.Type() == reflect.TypeOf(time.Duration(0)) {
+			d, err := time.ParseDuration(secretVal)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot parse duration %s: %w", field.Path, err))
+				continue
+			}
+			field.Value.Set(reflect.ValueOf(d))
+			continue
+		}
 
 		switch field.Kind {
 		// String
@@ -291,6 +400,27 @@ func (s *FileContentSource) Process(structMap map[string]ConfigField) error {
 				break
 			}
 			field.Value.SetInt(intVal)
+		case reflect.Int64:
+			intVal, err := strconv.ParseInt(secretVal, 10, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetInt(intVal)
+		case reflect.Uint:
+			uintVal, err := strconv.ParseUint(secretVal, 10, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetUint(uintVal)
+		case reflect.Float64:
+			floatVal, err := strconv.ParseFloat(secretVal, 64)
+			if err != nil {
+				allErrs = append(allErrs, fmt.Errorf("cannot set %s: %w", field.Path, err))
+				break
+			}
+			field.Value.SetFloat(floatVal)
 		// Bool
 		case reflect.Bool:
 			boolVal, _ := strconv.ParseBool(secretVal)

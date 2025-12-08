@@ -1,12 +1,18 @@
 # go-toolbox
 
-A collection of packages for building web servers in Go. It provides common functionality needed when setting up the plumbing for a project.
+A collection of Go packages for building web servers. Currently contains utilities for configuration management.
+
+## Installation
+
+```bash
+go get github.com/erlorenz/go-toolbox/cfgx
+```
 
 ## Packages
 
-### config
+### cfgx
 
-The config package provides a simple and flexible way to handle application configuration through environment variables and command-line flags. It uses struct tags to parse into a configuration struct. Heavily inspired by [github.com/ardanlabs/conf](https://pkg.go.dev/github.com/ardanlabs/conf/v3).
+The cfgx package provides a simple and flexible way to handle application configuration through environment variables and command-line flags. It uses struct tags to parse into a configuration struct. Heavily inspired by [github.com/ardanlabs/conf](https://pkg.go.dev/github.com/ardanlabs/conf/v3).
 
 #### Key Features
 
@@ -35,19 +41,54 @@ type Config struct {
 Then load your configuration:
 
 ```go
+import "github.com/erlorenz/go-toolbox/cfgx"
+
+// Optional: Set via -ldflags at build time for production
+var Version string
+
 func main() {
-    var cfg Config
-    opts := config.Options{
-        UseBuildInfo: true,
+    cfg := Config{
+        Version: Version, // Highest priority - set via ldflags
     }
-    if err := config.Parse(&cfg, opts); err != nil {
+
+    if err := cfgx.Parse(&cfg, cfgx.Options{}); err != nil {
         log.Fatalf("Configuration error: %v", err)
     }
 
     // Configuration is now ready to use
-    log.Printf("Starting server on port %d", cfg.Port)
+    log.Printf("Version %s: Starting server on port %d", cfg.Version, cfg.Port)
 }
 ```
+
+#### Setting Version for Production
+
+For production builds, inject the version using `-ldflags`:
+
+```bash
+# Local build
+VERSION=$(git describe --tags --always --dirty)
+go build -ldflags="-X main.Version=$VERSION" -o myapp
+
+# Docker build
+docker build --build-arg VERSION=$(git describe --tags --always) -t myapp .
+```
+
+Example Dockerfile:
+```dockerfile
+FROM golang:1.24 AS builder
+WORKDIR /src
+COPY go.* ./
+RUN go mod download
+COPY . .
+ARG VERSION=dev
+RUN go build -ldflags="-X main.Version=${VERSION}" -o /app
+
+FROM gcr.io/distroless/base-debian12
+COPY --from=builder /app /app
+ENTRYPOINT ["/app"]
+```
+
+The `Version` field will automatically use build info from `go build` during local development (returns version tag or `"(devel)"`). For production, use `-ldflags` as shown above for reliable version tracking.
 
 ## License
 

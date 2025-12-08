@@ -5,9 +5,20 @@ import (
 	"os"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/erlorenz/go-toolbox/cfgx"
 )
+
+// cleanupEnv registers cleanup to unset the given environment variables
+func cleanupEnv(t *testing.T, keys ...string) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, key := range keys {
+			os.Unsetenv(key)
+		}
+	})
+}
 
 func TestParse(t *testing.T) {
 	cfg := struct {
@@ -57,6 +68,7 @@ func TestParse(t *testing.T) {
 		os.Setenv("APP_LOGGING_LEVEL", "debug")
 		os.Setenv("VERSION", "error") // Should skip
 		os.Setenv("API_URL", "http://api.example.com")
+		cleanupEnv(t, "PROGRAM_AUTHOR", "APP_PORT", "APP_LOGGING_LEVEL", "VERSION", "API_URL")
 
 		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, EnvPrefix: "APP"})
 		if err != nil {
@@ -92,6 +104,7 @@ func TestParse(t *testing.T) {
 		os.Setenv("LOGGING_LEVEL", "debug")
 		os.Setenv("VERSION", "error")
 		os.Setenv("API_URL", "http://api.example.com")
+		cleanupEnv(t, "PROGRAM_AUTHOR", "PORT", "LOGGING_LEVEL", "VERSION", "API_URL")
 
 		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true})
 		if err != nil {
@@ -125,6 +138,7 @@ func TestParse(t *testing.T) {
 		os.Setenv("LOGGING_LEVEL", "debug")
 		os.Setenv("API_URL", "http://api.example.com")
 		os.Setenv("DEBUG", "true")
+		cleanupEnv(t, "PROGRAM_AUTHOR", "PORT", "LOGGING_LEVEL", "API_URL", "DEBUG")
 
 		args := []string{"-port", "3000", "--logging-level=error", "-author=Jack Smith", "-base-url=http://example.com/api"}
 
@@ -156,6 +170,7 @@ func TestParse(t *testing.T) {
 		os.Setenv("PORT", "5001")
 		os.Setenv("LOGGING_LEVEL", "debug")
 		os.Setenv("API_URL", "http://api.example.com")
+		cleanupEnv(t, "PROGRAM_AUTHOR", "PORT", "LOGGING_LEVEL", "API_URL")
 
 		args := []string{"-p", "3000", "--logging-level=error", "-author=Jack Smith", "-base-url=http://example.com/api"}
 
@@ -243,7 +258,7 @@ func TestOptions(t *testing.T) {
 		})
 
 		if want := "(devel)"; cfg.Version != want {
-			t.Errorf("wanted %s, got %s", want, cfg.Version)
+			t.Errorf("Version: wanted %s, got %s", want, cfg.Version)
 		}
 	})
 }
@@ -280,6 +295,111 @@ func TestValidate(t *testing.T) {
 		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
 		if err == nil {
 			t.Fatal(err)
+		}
+	})
+}
+
+func TestTypeSupport(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Duration_Default", func(t *testing.T) {
+		t.Parallel()
+		var cfg struct {
+			Timeout time.Duration `default:"5s"`
+		}
+
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if want := 5 * time.Second; cfg.Timeout != want {
+			t.Errorf("Timeout: wanted %v, got %v", want, cfg.Timeout)
+		}
+	})
+
+	t.Run("Duration_Env", func(t *testing.T) {
+		t.Parallel()
+		var cfg struct {
+			Timeout time.Duration
+		}
+
+		os.Setenv("TIMEOUT", "10m")
+		cleanupEnv(t, "TIMEOUT")
+
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if want := 10 * time.Minute; cfg.Timeout != want {
+			t.Errorf("Timeout: wanted %v, got %v", want, cfg.Timeout)
+		}
+	})
+
+	t.Run("Duration_Flag", func(t *testing.T) {
+		t.Parallel()
+		var cfg struct {
+			Timeout time.Duration `short:"t"`
+		}
+
+		args := []string{"-t", "1h30m"}
+
+		err := cfgx.Parse(&cfg, cfgx.Options{Args: args, SkipEnv: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if want := 90 * time.Minute; cfg.Timeout != want {
+			t.Errorf("Timeout: wanted %v, got %v", want, cfg.Timeout)
+		}
+	})
+
+	t.Run("Int64", func(t *testing.T) {
+		t.Parallel()
+		var cfg struct {
+			BigNum int64 `default:"9223372036854775807"`
+		}
+
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if want := int64(9223372036854775807); cfg.BigNum != want {
+			t.Errorf("BigNum: wanted %d, got %d", want, cfg.BigNum)
+		}
+	})
+
+	t.Run("Uint", func(t *testing.T) {
+		t.Parallel()
+		var cfg struct {
+			Count uint `default:"42"`
+		}
+
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if want := uint(42); cfg.Count != want {
+			t.Errorf("Count: wanted %d, got %d", want, cfg.Count)
+		}
+	})
+
+	t.Run("Float64", func(t *testing.T) {
+		t.Parallel()
+		var cfg struct {
+			Rate float64 `default:"3.14159"`
+		}
+
+		err := cfgx.Parse(&cfg, cfgx.Options{SkipFlags: true, SkipEnv: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if want := 3.14159; cfg.Rate != want {
+			t.Errorf("Rate: wanted %f, got %f", want, cfg.Rate)
 		}
 	})
 }
