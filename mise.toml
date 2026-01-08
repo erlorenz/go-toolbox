@@ -2,13 +2,10 @@
 description = "Test cfgx package"
 run = "go test ./cfgx"
 
-[tasks."test:enumgen"]
-description = "Test enumgen package"
-run = "go test ./enumgen"
 
 [tasks."test:all"]
 description = "Test all the packages"
-depends = ["test:cfgx", "test:enumgen"]
+depends = ["test:cfgx"]
 
 
 [tasks.gencfgx]
