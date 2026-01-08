@@ -59,3 +59,47 @@ func ToScreamingSnake(s string) string {
 func ToKebab(s string) string {
 	return strings.ReplaceAll(ToSnake(s), "_", "-")
 }
+
+// ToPascal converts snake_case, kebab-case, or mixed input to PascalCase
+func ToPascal(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	var str strings.Builder
+	capitalizeNext := true
+
+	for _, char := range s {
+		// Treat separators as word boundaries
+		if char == '_' || char == '-' || char == '.' || char == ' ' {
+			capitalizeNext = true
+			continue
+		}
+
+		if capitalizeNext {
+			str.WriteRune(unicode.ToUpper(char))
+			capitalizeNext = false
+		} else {
+			str.WriteRune(unicode.ToLower(char))
+		}
+	}
+
+	return str.String()
+}
+
+// ToCamel converts snake_case, kebab-case, or mixed input to camelCase
+func ToCamel(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	pascal := ToPascal(s)
+
+	// Convert first character to lowercase
+	r := []rune(pascal)
+	if len(r) > 0 {
+		r[0] = unicode.ToLower(r[0])
+	}
+
+	return string(r)
+}

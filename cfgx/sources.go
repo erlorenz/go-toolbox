@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erlorenz/go-toolbox/cfgx/internal/casing"
+	"github.com/erlorenz/go-toolbox/casing"
 )
 
 const (
