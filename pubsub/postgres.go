@@ -18,10 +18,10 @@ import (
 // but it still provides no durability - messages are lost if no subscribers
 // are listening.
 type Postgres struct {
-	pool     *pgxpool.Pool
-	mu       sync.RWMutex
+	pool      *pgxpool.Pool
+	mu        sync.RWMutex
 	listeners map[string]*topicListener
-	closed   bool
+	closed    bool
 }
 
 // topicListener manages all subscriptions for a single topic.
@@ -35,9 +35,9 @@ type topicListener struct {
 
 // handler represents a single subscriber's handler and context.
 type handler struct {
-	ctx     context.Context
-	fn      func([]byte)
-	cancel  context.CancelFunc
+	ctx    context.Context
+	fn     func([]byte)
+	cancel context.CancelFunc
 }
 
 // NewPostgres creates a new Postgres broker using the provided connection pool.
