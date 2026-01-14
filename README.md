@@ -1,10 +1,20 @@
 # go-toolbox
 
-A collection of Go packages for building web servers and rapid prototyping.
+A collection of lightweight, focused Go packages for building web applications and rapid prototyping.
 
 **Note:** These packages are designed for quick prototyping and experimentation. For production use, consider copying and adapting the code to your specific needs.
 
-## Installation
+## Packages
+
+| Package | Description | Documentation |
+|---------|-------------|---------------|
+| **[cfgx](cfgx/)** | Configuration management from env vars, flags, Docker secrets | [README](cfgx/README.md) |
+| **[pubsub](pubsub/)** | Simple publish-subscribe messaging (in-memory & PostgreSQL) | [README](pubsub/README.md) |
+| **[kv](kv/)** | Key-value store with TTL support (in-memory & PostgreSQL) | [README](kv/README.md) |
+
+## Quick Start
+
+Install individual packages:
 
 ```bash
 # Configuration management
@@ -12,182 +22,71 @@ go get github.com/erlorenz/go-toolbox/cfgx
 
 # Pub/sub messaging
 go get github.com/erlorenz/go-toolbox/pubsub
+
+# Key-value store
+go get github.com/erlorenz/go-toolbox/kv
 ```
 
-## Packages
+## Package Overview
 
-### cfgx
+### cfgx - Configuration Management
 
-The cfgx package provides a simple and flexible way to handle application configuration through environment variables and command-line flags. It uses struct tags to parse into a configuration struct. Heavily inspired by [github.com/ardanlabs/conf](https://pkg.go.dev/github.com/ardanlabs/conf/v3).
-
-#### Key Features
-
-- Unified handling of environment variables and command-line flags
-- Automatic parsing into configuration structs based on naming convention
-- Validation of required configuration values
-- Clear error messages for missing or invalid configuration
-- Support for default values
-
-#### Usage
-
-First, define your configuration structure with field tags:
+Parse configuration from multiple sources with priority-based overrides.
 
 ```go
 type Config struct {
-    Version string // populated with BuildInfo.Main.Version
-    Port     int    `env:"MY_PORT" short:"p" default:"8080"` // also reads flag -p
-    DBString string `flag:"dsn" required:"true"` // errors if empty
-    // Nested structs are prefixed
-    Log struct {
-        Level string // env=LOG_LEVEL flag=log-level
-    }
+    Port int `env:"PORT" default:"8080"`
 }
+
+cfgx.Parse(&cfg, cfgx.Options{})
 ```
 
-Then load your configuration:
+**Features:**
+- Environment variables, command-line flags, Docker secrets, defaults
+- Struct tags for declarative configuration
+- Nested struct support
+- Required field validation
+
+[Full documentation →](cfgx/README.md)
+
+### pubsub - Publish-Subscribe Messaging
+
+Fire-and-forget event notifications for decoupling application components.
 
 ```go
-import "github.com/erlorenz/go-toolbox/cfgx"
-
-// Optional: Set via -ldflags at build time for production
-var Version string
-
-func main() {
-    cfg := Config{
-        Version: Version, // Highest priority - set via ldflags
-    }
-
-    if err := cfgx.Parse(&cfg, cfgx.Options{}); err != nil {
-        log.Fatalf("Configuration error: %v", err)
-    }
-
-    // Configuration is now ready to use
-    log.Printf("Version %s: Starting server on port %d", cfg.Version, cfg.Port)
-}
+broker := pubsub.NewInMemory()
+broker.Subscribe(ctx, "events", func(payload []byte) {
+    fmt.Println("Received:", string(payload))
+})
+broker.Publish(ctx, "events", []byte("hello"))
 ```
 
-#### Setting Version for Production
+**Features:**
+- In-memory (single process) and PostgreSQL (multi-process) backends
+- Context-aware subscriptions
+- Build your own typed adapters
+- Perfect for SSE, cache invalidation, event notifications
 
-For production builds, inject the version using `-ldflags`:
+[Full documentation →](pubsub/README.md)
 
-```bash
-# Local build
-VERSION=$(git describe --tags --always --dirty)
-go build -ldflags="-X main.Version=$VERSION" -o myapp
+### kv - Key-Value Store
 
-# Docker build
-docker build --build-arg VERSION=$(git describe --tags --always) -t myapp .
-```
-
-Example Dockerfile:
-```dockerfile
-FROM golang:1.24 AS builder
-WORKDIR /src
-COPY go.* ./
-RUN go mod download
-COPY . .
-ARG VERSION=dev
-RUN go build -ldflags="-X main.Version=${VERSION}" -o /app
-
-FROM gcr.io/distroless/base-debian12
-COPY --from=builder /app /app
-ENTRYPOINT ["/app"]
-```
-
-The `Version` field will automatically use build info from `go build` during local development (returns version tag or `"(devel)"`). For production, use `-ldflags` as shown above for reliable version tracking.
-
-### pubsub
-
-A simple, low-level publish-subscribe messaging system for Go. Designed as a **dumb transport layer** for prototyping event-driven applications.
-
-#### Key Features
-
-- Fire-and-forget event notifications (not a queue)
-- Two implementations:
-  - `InMemory`: Channel-based, single-process
-  - `Postgres`: LISTEN/NOTIFY-based, multi-process
-- Interface-based for easy mocking
-- No durability, generics, or serialization - build your own adapters
-
-#### Quick Start
+Simple key-value store with TTL support and multiple backends.
 
 ```go
-import "github.com/erlorenz/go-toolbox/pubsub"
-
-func main() {
-    // Create broker
-    broker := pubsub.NewInMemory()
-    defer broker.Close()
-
-    ctx := context.Background()
-
-    // Subscribe
-    broker.Subscribe(ctx, "events", func(payload []byte) {
-        fmt.Printf("Received: %s\n", payload)
-    })
-
-    // Publish
-    broker.Publish(ctx, "events", []byte("hello world"))
-}
+store := kv.NewMemoryStore()
+store.Set(ctx, "user:123", []byte("alice"), 5*time.Minute)
+data, _ := store.Get(ctx, "user:123")
 ```
 
-#### Recommended Pattern: Adapter Layer
+**Features:**
+- `[]byte` interface - handle your own serialization
+- TTL/expiration support
+- Prefix-based key listing
+- In-memory (auto-cleanup) and PostgreSQL (opt-in cleanup) backends
+- UNLOGGED table support for 2-3x faster Postgres performance
 
-Build a typed adapter in your application for type safety and filtering:
-
-```go
-// Domain type
-type JobCompleted struct {
-    JobID   string `json:"job_id"`
-    BatchID string `json:"batch_id"`
-    Status  string `json:"status"`
-}
-
-// Adapter with type safety
-type JobEventsAdapter struct {
-    broker pubsub.Broker
-}
-
-func (a *JobEventsAdapter) PublishJobCompleted(ctx context.Context, event JobCompleted) error {
-    data, _ := json.Marshal(event)
-    return a.broker.Publish(ctx, "job.completed", data)
-}
-
-func (a *JobEventsAdapter) SubscribeToJobsInBatch(ctx context.Context, batchID string) <-chan JobCompleted {
-    ch := make(chan JobCompleted, 10)
-
-    a.broker.Subscribe(ctx, "job.completed", func(payload []byte) {
-        var event JobCompleted
-        json.Unmarshal(payload, &event)
-
-        // Filter by batch ID
-        if event.BatchID == batchID {
-            ch <- event
-        }
-    })
-
-    return ch
-}
-```
-
-See [examples/pubsub](examples/pubsub) for a complete SSE example.
-
-#### Postgres Implementation
-
-```go
-import "github.com/jackc/pgx/v5/pgxpool"
-
-pool, _ := pgxpool.New(ctx, connString)
-broker := pubsub.NewPostgres(pool)
-defer broker.Close()
-
-// Now publish/subscribe across multiple processes
-```
-
-**Limitations:**
-- 8000 byte payload limit (PostgreSQL NOTIFY restriction)
-- No durability (events lost if no listeners)
-- Still fire-and-forget (not a message queue)
+[Full documentation →](kv/README.md)
 
 ## Development
 
@@ -195,11 +94,22 @@ defer broker.Close()
 
 ```bash
 # All tests
+go test -v ./...
+
+# Specific package
+go test -v ./cfgx
+go test -v ./pubsub
+go test -v ./kv
+```
+
+Using mise:
+
+```bash
+# All tests
 mise run test:all
 
 # Specific package
 mise run test:cfgx
-go test -v ./pubsub
 ```
 
 ### Creating Releases
@@ -218,10 +128,21 @@ mise run tagbump major
 ```
 
 This creates a git tag locally. To push:
+
 ```bash
 git push origin v0.5.0
 ```
 
+## Design Philosophy
+
+These packages follow a few core principles:
+
+1. **Simple interfaces** - Easy to understand, test, and mock
+2. **No magic** - Explicit behavior, clear error messages
+3. **Build your own adapters** - Provide primitives, not frameworks
+4. **Production-ready patterns** - Based on proven designs (Rails Solid Cache, etc.)
+5. **Minimal dependencies** - Only what's necessary
+
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - see [LICENSE](LICENSE) for details.

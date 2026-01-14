@@ -12,6 +12,16 @@ go get github.com/erlorenz/go-toolbox/<package-name>
 
 **Current packages:**
 - `cfgx` - Configuration management from multiple sources (env vars, flags, docker secrets, defaults)
+- `pubsub` - Simple publish-subscribe messaging (in-memory & PostgreSQL)
+- `kv` - Key-value store with TTL support (in-memory & PostgreSQL)
+
+## Documentation Structure
+
+- **Main README** ([README.md](../README.md)) - Overview with table of contents linking to package-specific docs
+- **Package READMEs** - Each package has its own detailed README:
+  - [cfgx/README.md](../cfgx/README.md)
+  - [pubsub/README.md](../pubsub/README.md)
+  - [kv/README.md](../kv/README.md)
 
 ## Development Commands
 
@@ -25,6 +35,8 @@ go test --race -v ./...
 
 # Run specific package tests
 go test -v ./cfgx
+go test -v ./pubsub
+go test -v ./kv
 
 # Run specific test
 go test -v ./cfgx -run TestParse
@@ -35,20 +47,17 @@ go test -v ./cfgx -run TestParse
 go vet ./...
 ```
 
-**Run example:**
+**Run examples:**
 ```bash
 go run ./examples/config
+go run ./examples/pubsub
 ```
 
-**Note:** The Makefile references `./config` but the actual package is `./cfgx`. The Makefile may be outdated.
+## Package Architectures
 
-## Architecture: cfgx Package
+### cfgx - Configuration Management
 
-The `cfgx` package provides configuration parsing from multiple sources with a priority-based system.
-
-### Core Design
-
-**Source-based architecture:** Configuration values come from "sources" (defaults, environment variables, command-line flags, docker secrets, etc.) processed in priority order. Higher priority sources override lower priority ones.
+**Core Design:** Source-based architecture where configuration values come from "sources" processed in priority order.
 
 **Built-in source priorities:**
 - Command-line flags: 100 (highest)
@@ -56,61 +65,102 @@ The `cfgx` package provides configuration parsing from multiple sources with a p
 - Environment variables: 50
 - Default struct tags: 0 (lowest)
 
-### Key Components
+**Key Components:**
+- `Source` interface ([cfgx.go](../cfgx/cfgx.go))
+- `ConfigField` - Represents parsed struct field with metadata
+- Built-in sources in [sources.go](../cfgx/sources.go)
 
-**Source interface** ([cfgx.go](cfgx/cfgx.go:38-43)):
-```go
-type Source interface {
-    Priority() int
-    Process(map[string]ConfigField) error
-}
+**Supported types:** `string`, `int`, `bool`. Nested structs supported (dot notation).
+
+**Testing patterns:** Table-driven subtests with black-box testing (`package cfgx_test`).
+
+See [cfgx/README.md](../cfgx/README.md) for full documentation.
+
+### pubsub - Publish-Subscribe Messaging
+
+**Core Design:** Fire-and-forget event notifications with interface-based design.
+
+**Implementations:**
+- `InMemory` - Channel-based, single-process
+- `Postgres` - PostgreSQL LISTEN/NOTIFY, multi-process
+
+**Key Components:**
+- `Broker` interface ([pubsub.go](../pubsub/pubsub.go))
+- Context-aware subscriptions (auto-unsubscribe on cancel)
+- No durability, generics, or serialization - users build typed adapters
+
+**Important patterns:**
+- Build application-specific adapters for type safety
+- Handler errors are silently ignored (fire-and-forget)
+- Postgres payload limit: 8000 bytes
+
+**Testing:** Mock the `Broker` interface.
+
+See [pubsub/README.md](../pubsub/README.md) for full documentation.
+
+### kv - Key-Value Store
+
+**Core Design:** Simple `[]byte` interface allowing users to handle their own serialization.
+
+**Implementations:**
+- `MemoryStore` - In-memory with automatic cleanup every 1 minute
+- `PostgresStore` - PostgreSQL-backed with opt-in cleanup
+
+**Key Components:**
+- `Store` interface ([kv.go](../kv/kv.go))
+- FNV-1a hash for fast lookups (BIGINT primary key)
+- TTL/expiration support
+- Prefix-based key listing
+
+**PostgreSQL Schema:**
+```sql
+CREATE UNLOGGED TABLE kv_store (
+    key_hash BIGINT PRIMARY KEY,        -- FNV-1a hash
+    key TEXT NOT NULL,                  -- Actual key for collision detection
+    value BYTEA NOT NULL,               -- Raw bytes
+    expires_at TIMESTAMPTZ,             -- Optional expiration
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
-All configuration sources implement this interface. Users can add custom sources by implementing it and passing via `Options.Sources`.
+**Design decisions:**
+- `key_hash` (BIGINT) for consistent fast lookups regardless of key length
+- FNV-1a hash: fast, good distribution, non-cryptographic
+- `updated_at` instead of `created_at`: more useful for cache use cases
+- UNLOGGED table option: 2-3x faster, acceptable for cache (data lost on crash)
 
-**ConfigField** ([cfgx.go](cfgx/cfgx.go:140-149)): Represents a parsed struct field with metadata (path, value, tags, reflection info). The `walkStruct` function recursively walks the config struct to build a `map[string]ConfigField` using dot notation for nested paths.
+**Cleanup strategies:**
+- `MemoryStore`: Always automatic (cheap, in-process)
+- `PostgresStore`: Opt-in via `WithCleanup(interval)` or manual via `Cleanup(ctx)`
 
-**Built-in sources** ([sources.go](cfgx/sources.go)):
-- `defaultSource`: Reads `default:"value"` struct tags
-- `envSource`: Reads environment variables (auto-generates SCREAMING_SNAKE_CASE names from field paths, supports `env:"NAME"` tag override and `EnvPrefix` option)
-- `flagSource`: Reads command-line flags (auto-generates kebab-case names, supports `flag:"name"` and `short:"x"` tags)
-- `DockerSecretsSource`: Reads files from `/run/secrets/` (uses `os.Root` for security, supports `dsec:"filename"` tag)
+**Testing patterns:** Interface-based testing, black-box tests in `package kv_test`.
 
-**Struct tag system:**
-- `env:"NAME"` - Override environment variable name
-- `flag:"name"` - Override flag name
-- `short:"x"` - Add short flag alias (e.g., `-p` for `--port`)
-- `default:"value"` - Default value
-- `desc:"text"` - Description for help text
-- `optional:"true"` - Mark field as optional (otherwise required)
-- `dsec:"filename"` - Docker secret filename
+See [kv/README.md](../kv/README.md) for full documentation.
 
-**Supported types:** `string`, `int`, `bool`. Nested structs are supported (field paths use dot notation).
+## Common Patterns
 
-### Processing Flow
+### Interface-Based Design
+All packages provide simple interfaces that are easy to mock and test:
+- `cfgx.Source` - Configuration sources
+- `pubsub.Broker` - Pub/sub messaging
+- `kv.Store` - Key-value storage
 
-1. Validate input is pointer to struct
-2. Walk struct recursively to build `map[string]ConfigField`
-3. Set `Version` field from build info if present
-4. Sort sources by priority (low to high)
-5. Call `Process()` on each source in order
-6. Validate required fields (fields without `optional:"true"` must be non-zero)
+### Build Your Own Adapters
+Packages provide primitives, not frameworks. Users should build application-specific adapters:
+- Type-safe wrappers around `pubsub.Broker`
+- Serialization adapters around `kv.Store`
+- Custom configuration sources for `cfgx`
 
-### Testing Patterns
+### Testing
+- Use table-driven subtests with `t.Run()`
+- Black-box testing with `_test` package suffix
+- Mock interfaces for unit tests
+- Use options to skip sources/features during testing
 
-Tests use table-driven subtests with `t.Run()`. See [config_test.go](cfgx/config_test.go) for examples:
-- Tests use the `_test` package suffix (`package cfgx_test`) for black-box testing
-- Common pattern: define a base config struct, copy it in subtests to avoid mutation
-- Use `Options.SkipFlags` and `Options.SkipEnv` to test sources in isolation
-- Use `testing/fstest` for testing file-based sources
+## Design Philosophy
 
-### Adding New Sources
-
-To add a custom configuration source:
-1. Implement the `Source` interface
-2. Choose an appropriate priority (0-100+ scale)
-3. In `Process()`, iterate over the `map[string]ConfigField` and set values using `field.Value.Set*()`
-4. Return `&MultiError{errs}` if multiple errors occur
-5. Pass the source via `Options.Sources` when calling `Parse()`
-
-Example: The `DockerSecretsSource` wraps `FileContentSource` and opens `/run/secrets` using `os.Root.FS()` for security.
+1. **Simple interfaces** - Easy to understand, test, and mock
+2. **No magic** - Explicit behavior, clear error messages
+3. **Build your own adapters** - Provide primitives, not frameworks
+4. **Production-ready patterns** - Based on proven designs (Rails Solid Cache, etc.)
+5. **Minimal dependencies** - Only what's necessary
