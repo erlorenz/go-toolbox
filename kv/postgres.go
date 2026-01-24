@@ -225,10 +225,10 @@ func (s *PostgresStore) Delete(ctx context.Context, key string) error {
 	keyHash := hashKey(key)
 
 	query := fmt.Sprintf(`
-		DELETE FROM %s WHERE key_hash = $1
+		DELETE FROM %s WHERE key_hash = $1 AND key = $2
 	`, pgx.Identifier{s.tableName}.Sanitize())
 
-	_, err := s.pool.Exec(ctx, query, keyHash)
+	_, err := s.pool.Exec(ctx, query, keyHash, key)
 	return err
 }
 
