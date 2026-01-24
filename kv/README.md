@@ -91,8 +91,10 @@ store.Set(ctx, "key", []byte("value"), time.Hour)
 kv.WithFormat("JSONB")      // Default: Store as JSONB for JSON data
 kv.WithFormat("BYTEA")      // Use BYTEA for binary data or non-JSON
 
-// Encryption
-encryptor := NewAESEncryptor(key)  // Your Encryptor implementation
+// Encryption (built-in AES-256-GCM)
+key := make([]byte, 32)  // 32 bytes for AES-256
+io.ReadFull(rand.Reader, key)
+encryptor, _ := kv.NewAESEncryptor(key)
 kv.WithEncryption(encryptor)       // Automatically uses BYTEA format
 
 // Table customization
@@ -105,6 +107,10 @@ kv.WithKeyIndex(true)              // Index for fast prefix searches (adds overh
 kv.WithCleanup(5*time.Minute)      // Auto-cleanup expired entries
 
 // Example: Encrypted cache with fast prefix searches
+key := make([]byte, 32)
+io.ReadFull(rand.Reader, key)
+encryptor, _ := kv.NewAESEncryptor(key)
+
 store := kv.NewPostgresStore(pool,
     kv.WithEncryption(encryptor),
     kv.WithUnlogged(true),
@@ -167,7 +173,46 @@ err := store.Update(ctx, "balance", 0, func(current []byte) ([]byte, error) {
 
 ## Encryption
 
-Implement the `Encryptor` interface to add transparent encryption:
+### Built-in AES Encryptor
+
+The package includes a production-ready AES-256-GCM encryptor:
+
+```go
+import (
+    "crypto/rand"
+    "io"
+    "github.com/erlorenz/go-toolbox/kv"
+)
+
+// Generate a 32-byte key for AES-256
+key := make([]byte, 32)
+if _, err := io.ReadFull(rand.Reader, key); err != nil {
+    log.Fatal(err)
+}
+
+// Create encryptor
+encryptor, err := kv.NewAESEncryptor(key)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Use with store
+store := kv.NewPostgresStore(pool, kv.WithEncryption(encryptor))
+
+// All operations are now encrypted
+store.Set(ctx, "secret", []byte("sensitive data"), 0)
+data, _ := store.Get(ctx, "secret") // Automatically decrypted
+```
+
+**AES-256-GCM features:**
+- Industry-standard encryption (AES-256)
+- Authenticated encryption (GCM prevents tampering)
+- Random nonce for each encryption
+- Thread-safe for concurrent use
+
+### Custom Encryptors
+
+Implement the `Encryptor` interface for custom encryption:
 
 ```go
 type Encryptor interface {
@@ -176,34 +221,28 @@ type Encryptor interface {
 }
 ```
 
-Example using AES-256-GCM:
+Example using AWS KMS:
 
 ```go
-type AESEncryptor struct {
-    gcm cipher.AEAD
+type KMSEncryptor struct {
+    client *kms.Client
+    keyID  string
 }
 
-func NewAESEncryptor(key []byte) (*AESEncryptor, error) {
-    block, _ := aes.NewCipher(key) // 32-byte key for AES-256
-    gcm, _ := cipher.NewGCM(block)
-    return &AESEncryptor{gcm: gcm}, nil
+func (e *KMSEncryptor) Encrypt(ctx context.Context, plaintext []byte) ([]byte, error) {
+    result, err := e.client.Encrypt(ctx, &kms.EncryptInput{
+        KeyId:     aws.String(e.keyID),
+        Plaintext: plaintext,
+    })
+    return result.CiphertextBlob, err
 }
 
-func (e *AESEncryptor) Encrypt(ctx context.Context, plaintext []byte) ([]byte, error) {
-    nonce := make([]byte, e.gcm.NonceSize())
-    io.ReadFull(rand.Reader, nonce)
-    return e.gcm.Seal(nonce, nonce, plaintext, nil), nil
+func (e *KMSEncryptor) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error) {
+    result, err := e.client.Decrypt(ctx, &kms.DecryptInput{
+        CiphertextBlob: ciphertext,
+    })
+    return result.Plaintext, err
 }
-
-func (e *AESEncryptor) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error) {
-    nonceSize := e.gcm.NonceSize()
-    nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-    return e.gcm.Open(nil, nonce, ciphertext, nil)
-}
-
-// Use with store
-encryptor, _ := NewAESEncryptor(key)
-store := kv.NewPostgresStore(pool, kv.WithEncryption(encryptor))
 ```
 
 **Encryption features:**
@@ -212,11 +251,39 @@ store := kv.NewPostgresStore(pool, kv.WithEncryption(encryptor))
 - Format override - Uses BYTEA storage by default
 - Zero performance impact on MemoryStore (just []byte storage)
 
-**Production recommendations:**
-- Use proper key management (AWS KMS, HashiCorp Vault, etc.)
-- Implement key rotation strategy
-- Consider envelope encryption for large values
-- Monitor decryption failures
+**Key Management Best Practices:**
+
+1. **Generate keys securely:**
+   ```go
+   key := make([]byte, 32)
+   if _, err := io.ReadFull(rand.Reader, key); err != nil {
+       log.Fatal(err)
+   }
+   ```
+
+2. **Store keys securely:**
+   - Environment variables: `os.Getenv("ENCRYPTION_KEY")`
+   - AWS Secrets Manager / Parameter Store
+   - HashiCorp Vault
+   - GCP Secret Manager
+   - Never hardcode keys in source code
+   - Never commit keys to version control
+
+3. **Key rotation:**
+   - Implement versioned encryption (store key version with each value)
+   - Decrypt with old key, re-encrypt with new key
+   - Rotate keys periodically (e.g., every 90 days)
+
+4. **Envelope encryption (for large values):**
+   - Use KMS to encrypt a data encryption key (DEK)
+   - Use DEK to encrypt actual data
+   - Store encrypted DEK with data
+   - Reduces KMS API calls and costs
+
+5. **Monitor and alert:**
+   - Track decryption failures (may indicate key issues)
+   - Log encryption/decryption errors
+   - Alert on authentication failures (tampering attempts)
 
 ## Application-Specific Adapters
 
