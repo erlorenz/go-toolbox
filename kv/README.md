@@ -5,6 +5,7 @@ A simple, fast key-value store package for Go with support for multiple backends
 ## Features
 
 - **Simple `[]byte` interface** - Handle your own serialization (JSON, protobuf, etc.)
+- **Atomic updates** - Read-modify-write operations without race conditions
 - **TTL support** - Automatic expiration of entries
 - **Prefix-based key listing** - Find all keys matching a prefix
 - **Multiple backends**:
@@ -41,6 +42,16 @@ if err == kv.ErrNotFound {
 // Delete
 store.Delete(ctx, "user:123")
 
+// Atomic update - read, modify, write in one operation
+err := store.Update(ctx, "counter:visits", 0, func(current []byte) ([]byte, error) {
+    var count int
+    if current != nil {
+        count, _ = strconv.Atoi(string(current))
+    }
+    count++
+    return []byte(strconv.Itoa(count)), nil
+})
+
 // List keys with prefix
 keys, _ := store.Keys(ctx, "user:")
 ```
@@ -70,6 +81,57 @@ store.CreateTable(ctx)
 // Use same API as MemoryStore
 store.Set(ctx, "key", []byte("value"), time.Hour)
 ```
+
+## Atomic Updates
+
+The `Update` method provides atomic read-modify-write operations, preventing race conditions when multiple processes update the same key.
+
+```go
+// Increment a counter atomically
+err := store.Update(ctx, "page:views", 0, func(current []byte) ([]byte, error) {
+    var count int
+    if current != nil {
+        count, _ = strconv.Atoi(string(current))
+    }
+    count++
+    return []byte(strconv.Itoa(count)), nil
+})
+
+// Append to a list atomically
+err := store.Update(ctx, "recent:events", time.Hour, func(current []byte) ([]byte, error) {
+    var events []Event
+    if current != nil {
+        json.Unmarshal(current, &events)
+    }
+
+    events = append(events, newEvent)
+
+    // Keep only last 100
+    if len(events) > 100 {
+        events = events[len(events)-100:]
+    }
+
+    return json.Marshal(events)
+})
+
+// Conditional update with error rollback
+err := store.Update(ctx, "balance", 0, func(current []byte) ([]byte, error) {
+    balance, _ := strconv.Atoi(string(current))
+
+    if balance < withdrawAmount {
+        return nil, errors.New("insufficient funds") // No update happens
+    }
+
+    balance -= withdrawAmount
+    return []byte(strconv.Itoa(balance)), nil
+})
+```
+
+**Implementation details:**
+- **MemoryStore**: Uses write lock for entire operation
+- **PostgresStore**: Uses transaction with `SELECT FOR UPDATE` for row-level locking
+- If the update function returns an error, no changes are made
+- The function receives `nil` if the key doesn't exist or is expired
 
 ## Application-Specific Adapters
 

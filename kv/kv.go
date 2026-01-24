@@ -26,6 +26,13 @@ type Store interface {
 	// If ttl is 0, the value never expires (if backend supports expiration).
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 
+	// Update atomically reads, modifies, and writes a value.
+	// The function receives the current value (or nil if key doesn't exist/expired).
+	// If the function returns an error, the update is aborted and no changes are made.
+	// If successful, the new value is stored with the given TTL (0 = no expiration).
+	// This operation is atomic - no other operations can modify the key during the update.
+	Update(ctx context.Context, key string, ttl time.Duration, fn func(current []byte) ([]byte, error)) error
+
 	// Delete removes a value by key. Returns nil if the key doesn't exist.
 	Delete(ctx context.Context, key string) error
 

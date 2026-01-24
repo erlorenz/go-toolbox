@@ -71,6 +71,38 @@ func (s *MemoryStore) Set(ctx context.Context, key string, value []byte, ttl tim
 	return nil
 }
 
+// Update atomically reads, modifies, and writes a value.
+// The function receives the current value (or nil if key doesn't exist/expired).
+// If the function returns an error, no changes are made.
+func (s *MemoryStore) Update(ctx context.Context, key string, ttl time.Duration, fn func(current []byte) ([]byte, error)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Get current value (nil if not found or expired)
+	var current []byte
+	if item, ok := s.data[key]; ok && !item.isExpired() {
+		current = item.value
+	}
+
+	// Call user function
+	newValue, err := fn(current)
+	if err != nil {
+		return err
+	}
+
+	// Store the new value
+	newItem := &item{
+		value: newValue,
+	}
+
+	if ttl > 0 {
+		newItem.expiresAt = time.Now().Add(ttl)
+	}
+
+	s.data[key] = newItem
+	return nil
+}
+
 // Delete removes a value by key. Returns nil if the key doesn't exist.
 func (s *MemoryStore) Delete(ctx context.Context, key string) error {
 	s.mu.Lock()

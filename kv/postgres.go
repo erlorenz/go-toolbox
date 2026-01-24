@@ -162,6 +162,64 @@ func (s *PostgresStore) Set(ctx context.Context, key string, value []byte, ttl t
 	return err
 }
 
+// Update atomically reads, modifies, and writes a value using a transaction.
+// The function receives the current value (or nil if key doesn't exist/expired).
+// If the function returns an error, the transaction is rolled back.
+// Uses SELECT FOR UPDATE to lock the row and prevent concurrent modifications.
+func (s *PostgresStore) Update(ctx context.Context, key string, ttl time.Duration, fn func(current []byte) ([]byte, error)) error {
+	keyHash := hashKey(key)
+
+	// Start transaction
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Lock the row and get current value (if exists and not expired)
+	selectQuery := fmt.Sprintf(`
+		SELECT value FROM %s
+		WHERE key_hash = $1
+		AND key = $2
+		AND (expires_at IS NULL OR expires_at > NOW())
+		FOR UPDATE
+	`, pgx.Identifier{s.tableName}.Sanitize())
+
+	var current []byte
+	err = tx.QueryRow(ctx, selectQuery, keyHash, key).Scan(&current)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	// If ErrNoRows, current remains nil (key doesn't exist)
+
+	// Call user function
+	newValue, err := fn(current)
+	if err != nil {
+		return err
+	}
+
+	// Store the new value
+	var expiresAt any
+	if ttl > 0 {
+		expiresAt = time.Now().Add(ttl)
+	}
+
+	upsertQuery := fmt.Sprintf(`
+		INSERT INTO %s (key_hash, key, value, expires_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (key_hash)
+		DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at, updated_at = NOW()
+	`, pgx.Identifier{s.tableName}.Sanitize())
+
+	_, err = tx.Exec(ctx, upsertQuery, keyHash, key, newValue, expiresAt)
+	if err != nil {
+		return err
+	}
+
+	// Commit transaction
+	return tx.Commit(ctx)
+}
+
 // Delete removes a value by key. Returns nil if the key doesn't exist.
 func (s *PostgresStore) Delete(ctx context.Context, key string) error {
 	keyHash := hashKey(key)
