@@ -16,6 +16,16 @@ var (
 	ErrNotFound = errors.New("key not found")
 )
 
+// Encryptor provides encryption and decryption for values.
+// Implementations should be safe for concurrent use.
+type Encryptor interface {
+	// Encrypt encrypts plaintext and returns ciphertext.
+	Encrypt(ctx context.Context, plaintext []byte) ([]byte, error)
+
+	// Decrypt decrypts ciphertext and returns plaintext.
+	Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
+}
+
 // Store is a key-value store interface that works with raw bytes.
 // Users should build their own adapters for type-safe operations and serialization.
 type Store interface {

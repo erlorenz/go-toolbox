@@ -8,9 +8,11 @@ A simple, fast key-value store package for Go with support for multiple backends
 - **Atomic updates** - Read-modify-write operations without race conditions
 - **TTL support** - Automatic expiration of entries
 - **Prefix-based key listing** - Find all keys matching a prefix
+- **Encryption** - Optional transparent encryption with custom encryptors
+- **JSONB support** - Store and query JSON data directly in PostgreSQL
 - **Multiple backends**:
   - **MemoryStore** - In-memory with automatic cleanup
-  - **PostgresStore** - PostgreSQL-backed with optional cleanup
+  - **PostgresStore** - PostgreSQL-backed with JSONB or BYTEA storage
 - **Production-ready** - Inspired by Rails Solid Cache design
 
 ## Installation
@@ -82,6 +84,36 @@ store.CreateTable(ctx)
 store.Set(ctx, "key", []byte("value"), time.Hour)
 ```
 
+### PostgreSQL Configuration Options
+
+```go
+// Storage format
+kv.WithFormat("JSONB")      // Default: Store as JSONB for JSON data
+kv.WithFormat("BYTEA")      // Use BYTEA for binary data or non-JSON
+
+// Encryption
+encryptor := NewAESEncryptor(key)  // Your Encryptor implementation
+kv.WithEncryption(encryptor)       // Automatically uses BYTEA format
+
+// Table customization
+kv.WithTableName("custom_kv")      // Override auto-generated table name
+kv.WithSchema("myschema")          // Use specific schema (default: "public")
+
+// Performance
+kv.WithUnlogged(true)              // 2-3x faster, data lost on crash
+kv.WithKeyIndex(true)              // Index for fast prefix searches (adds overhead)
+kv.WithCleanup(5*time.Minute)      // Auto-cleanup expired entries
+
+// Example: Encrypted cache with fast prefix searches
+store := kv.NewPostgresStore(pool,
+    kv.WithEncryption(encryptor),
+    kv.WithUnlogged(true),
+    kv.WithKeyIndex(true),
+    kv.WithSchema("cache"),
+)
+// Auto-generates table name: "kv_store_encrypted_unlogged"
+```
+
 ## Atomic Updates
 
 The `Update` method provides atomic read-modify-write operations, preventing race conditions when multiple processes update the same key.
@@ -133,6 +165,59 @@ err := store.Update(ctx, "balance", 0, func(current []byte) ([]byte, error) {
 - If the update function returns an error, no changes are made
 - The function receives `nil` if the key doesn't exist or is expired
 
+## Encryption
+
+Implement the `Encryptor` interface to add transparent encryption:
+
+```go
+type Encryptor interface {
+    Encrypt(ctx context.Context, plaintext []byte) ([]byte, error)
+    Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
+}
+```
+
+Example using AES-256-GCM:
+
+```go
+type AESEncryptor struct {
+    gcm cipher.AEAD
+}
+
+func NewAESEncryptor(key []byte) (*AESEncryptor, error) {
+    block, _ := aes.NewCipher(key) // 32-byte key for AES-256
+    gcm, _ := cipher.NewGCM(block)
+    return &AESEncryptor{gcm: gcm}, nil
+}
+
+func (e *AESEncryptor) Encrypt(ctx context.Context, plaintext []byte) ([]byte, error) {
+    nonce := make([]byte, e.gcm.NonceSize())
+    io.ReadFull(rand.Reader, nonce)
+    return e.gcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+func (e *AESEncryptor) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error) {
+    nonceSize := e.gcm.NonceSize()
+    nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+    return e.gcm.Open(nil, nonce, ciphertext, nil)
+}
+
+// Use with store
+encryptor, _ := NewAESEncryptor(key)
+store := kv.NewPostgresStore(pool, kv.WithEncryption(encryptor))
+```
+
+**Encryption features:**
+- Transparent - Get/Set/Update automatically encrypt/decrypt
+- Context-aware - Encryptor receives context for cancellation
+- Format override - Uses BYTEA storage by default
+- Zero performance impact on MemoryStore (just []byte storage)
+
+**Production recommendations:**
+- Use proper key management (AWS KMS, HashiCorp Vault, etc.)
+- Implement key rotation strategy
+- Consider envelope encryption for large values
+- Monitor decryption failures
+
 ## Application-Specific Adapters
 
 Build type-safe adapters for your use case:
@@ -169,19 +254,39 @@ func (c *UserCache) Set(ctx context.Context, user *User, ttl time.Duration) erro
 - No codec abstraction needed - users know their data best
 - Simpler implementation, easier to reason about
 
+### JSONB vs BYTEA
+
+**JSONB (default):**
+- Best for JSON-serialized data
+- Validates JSON on write (fails fast on invalid JSON)
+- Easier debugging - can query PostgreSQL directly
+- Native PostgreSQL indexing and query support
+- Slightly larger storage overhead
+
+**BYTEA:**
+- For binary formats (protobuf, msgpack, etc.)
+- Required for encryption
+- No validation overhead
+- More compact for non-text data
+
+**Recommendation:** Use JSONB unless you need encryption or non-JSON serialization.
+
 ### PostgreSQL Schema
 
 ```sql
 CREATE UNLOGGED TABLE kv_store (
     key_hash BIGINT PRIMARY KEY,        -- FNV-1a hash for fast lookups
     key TEXT NOT NULL,                  -- Actual key for collision detection
-    value BYTEA NOT NULL,               -- Raw bytes
+    value JSONB NOT NULL,               -- JSONB or BYTEA depending on config
     expires_at TIMESTAMPTZ,             -- Optional expiration
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX kv_store_expires_idx ON kv_store (expires_at)
 WHERE expires_at IS NOT NULL;
+
+-- Optional: fast prefix searches
+CREATE INDEX kv_store_key_idx ON kv_store (key text_pattern_ops);
 ```
 
 **Why `key_hash`?**
@@ -193,6 +298,11 @@ WHERE expires_at IS NOT NULL;
 - Fast non-cryptographic hash
 - Good distribution for cache keys
 - Collision detection via storing actual key
+
+**Table naming:**
+- Auto-generated based on configuration for multiple use cases
+- Examples: `kv_store`, `kv_store_unlogged`, `kv_store_encrypted`, etc.
+- Override with `WithTableName()` if needed
 
 ## Cleanup Strategies
 
