@@ -11,14 +11,16 @@ go get github.com/erlorenz/go-toolbox/<package-name>
 ```
 
 **Current packages:**
+- `casing` - String case conversion utilities (snake_case, camelCase, PascalCase, kebab-case, etc.)
 - `cfgx` - Configuration management from multiple sources (env vars, flags, docker secrets, defaults)
 - `pubsub` - Simple publish-subscribe messaging (in-memory & PostgreSQL)
-- `kv` - Key-value store with TTL support (in-memory & PostgreSQL)
+- `kv` - Key-value store with TTL, encryption, and atomic updates (in-memory & PostgreSQL)
 
 ## Documentation Structure
 
 - **Main README** ([README.md](../README.md)) - Overview with table of contents linking to package-specific docs
 - **Package READMEs** - Each package has its own detailed README:
+  - [casing/README.md](../casing/README.md)
   - [cfgx/README.md](../cfgx/README.md)
   - [pubsub/README.md](../pubsub/README.md)
   - [kv/README.md](../kv/README.md)
@@ -34,12 +36,13 @@ go test -v ./...
 go test --race -v ./...
 
 # Run specific package tests
+go test -v ./casing
 go test -v ./cfgx
 go test -v ./pubsub
 go test -v ./kv
 
 # Run specific test
-go test -v ./cfgx -run TestParse
+go test -v ./casing -run TestToSnake
 ```
 
 **Lint:**
@@ -54,6 +57,31 @@ go run ./examples/pubsub
 ```
 
 ## Package Architectures
+
+### casing - String Case Conversion
+
+**Core Design:** Pure functions for converting between different string casing conventions.
+
+**Functions:**
+- `ToSnake(s string) string` - Converts to snake_case
+- `ToScreamingSnake(s string) string` - Converts to SCREAMING_SNAKE_CASE
+- `ToKebab(s string) string` - Converts to kebab-case
+- `ToPascal(s string) string` - Converts to PascalCase
+- `ToCamel(s string) string` - Converts to camelCase
+
+**Key Features:**
+- Handles acronyms correctly (e.g., "HTTPServer" → "http_server")
+- Preserves word boundaries with dots (e.g., "User.Name" → "user_name")
+- No dependencies, just standard library
+
+**Use Cases:**
+- API/database field name conversion
+- Configuration key normalization
+- Code generation
+
+**Testing patterns:** Table-driven tests with comprehensive edge cases.
+
+See [casing/README.md](../casing/README.md) for full documentation.
 
 ### cfgx - Configuration Management
 
@@ -104,29 +132,69 @@ See [pubsub/README.md](../pubsub/README.md) for full documentation.
 
 **Implementations:**
 - `MemoryStore` - In-memory with automatic cleanup every 1 minute
-- `PostgresStore` - PostgreSQL-backed with opt-in cleanup
+- `PostgresStore` - PostgreSQL-backed with JSONB or BYTEA storage, optional cleanup
 
 **Key Components:**
-- `Store` interface ([kv.go](../kv/kv.go))
+- `Store` interface ([kv.go](../kv/kv.go)) - Get, Set, Update, Delete, Keys, Close
+- `Encryptor` interface - Encrypt/Decrypt for transparent encryption
+- `AESEncryptor` - Built-in AES-256-GCM encryption
 - FNV-1a hash for fast lookups (BIGINT primary key)
 - TTL/expiration support
+- Atomic updates with `Update()` method
 - Prefix-based key listing
+
+**Atomic Updates:**
+- `Update(ctx, key, ttl, fn)` - Read-modify-write in one operation
+- **MemoryStore**: Uses write lock for atomicity
+- **PostgresStore**: Uses transaction with `SELECT FOR UPDATE` for row-level locking
+- Function receives current value (or nil), returns new value or error
+- On error, transaction rolls back - no changes made
+
+**Encryption:**
+- Built-in `AESEncryptor` using AES-256-GCM
+- Custom encryptors via `Encryptor` interface
+- Transparent encrypt/decrypt in Get/Set/Update
+- Authenticated encryption (GCM prevents tampering)
+
+**PostgreSQL Options:**
+- `WithFormat("JSONB" | "BYTEA")` - Storage format (default: JSONB, or BYTEA if encrypted)
+- `WithEncryption(Encryptor)` - Enable encryption
+- `WithSchema(string)` - PostgreSQL schema (default: "public")
+- `WithTableName(string)` - Override auto-generated table name
+- `WithUnlogged(bool)` - UNLOGGED table for 2-3x faster performance
+- `WithKeyIndex(bool)` - Index on key column for fast prefix searches
+- `WithCleanup(duration)` - Auto-cleanup expired entries
 
 **PostgreSQL Schema:**
 ```sql
 CREATE UNLOGGED TABLE kv_store (
     key_hash BIGINT PRIMARY KEY,        -- FNV-1a hash
     key TEXT NOT NULL,                  -- Actual key for collision detection
-    value BYTEA NOT NULL,               -- Raw bytes
+    value JSONB NOT NULL,               -- JSONB (default) or BYTEA (encrypted)
     expires_at TIMESTAMPTZ,             -- Optional expiration
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX kv_store_expires_idx ON kv_store (expires_at)
+WHERE expires_at IS NOT NULL;
+
+-- Optional: for fast prefix searches
+CREATE INDEX kv_store_key_idx ON kv_store (key text_pattern_ops);
 ```
+
+**Table Naming:**
+Auto-generated based on configuration:
+- `kv_store` - JSONB, logged
+- `kv_store_unlogged` - JSONB, unlogged
+- `kv_store_encrypted` - BYTEA with encryption, logged
+- `kv_store_encrypted_unlogged` - BYTEA with encryption, unlogged
 
 **Design decisions:**
 - `key_hash` (BIGINT) for consistent fast lookups regardless of key length
 - FNV-1a hash: fast, good distribution, non-cryptographic
 - `updated_at` instead of `created_at`: more useful for cache use cases
+- JSONB default: validates JSON, enables PostgreSQL queries, easier debugging
+- BYTEA for encryption: required for encrypted binary data
 - UNLOGGED table option: 2-3x faster, acceptable for cache (data lost on crash)
 
 **Cleanup strategies:**
@@ -134,6 +202,12 @@ CREATE UNLOGGED TABLE kv_store (
 - `PostgresStore`: Opt-in via `WithCleanup(interval)` or manual via `Cleanup(ctx)`
 
 **Testing patterns:** Interface-based testing, black-box tests in `package kv_test`.
+
+**Important files:**
+- [kv.go](../kv/kv.go) - Interfaces (Store, Encryptor)
+- [memory.go](../kv/memory.go) - In-memory implementation
+- [postgres.go](../kv/postgres.go) - PostgreSQL implementation
+- [aes_encryptor.go](../kv/aes_encryptor.go) - Built-in AES-256-GCM encryptor
 
 See [kv/README.md](../kv/README.md) for full documentation.
 
@@ -144,11 +218,13 @@ All packages provide simple interfaces that are easy to mock and test:
 - `cfgx.Source` - Configuration sources
 - `pubsub.Broker` - Pub/sub messaging
 - `kv.Store` - Key-value storage
+- `kv.Encryptor` - Encryption/decryption
 
 ### Build Your Own Adapters
 Packages provide primitives, not frameworks. Users should build application-specific adapters:
 - Type-safe wrappers around `pubsub.Broker`
 - Serialization adapters around `kv.Store`
+- Custom encryptors for `kv.Encryptor` (KMS, Vault, etc.)
 - Custom configuration sources for `cfgx`
 
 ### Testing
