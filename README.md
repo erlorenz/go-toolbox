@@ -8,15 +8,19 @@ A collection of lightweight, focused Go packages for building web applications a
 
 | Package | Description | Documentation |
 |---------|-------------|---------------|
+| **[casing](casing/)** | String case conversion (snake_case, camelCase, PascalCase, kebab-case) | [README](casing/README.md) |
 | **[cfgx](cfgx/)** | Configuration management from env vars, flags, Docker secrets | [README](cfgx/README.md) |
 | **[pubsub](pubsub/)** | Simple publish-subscribe messaging (in-memory & PostgreSQL) | [README](pubsub/README.md) |
-| **[kv](kv/)** | Key-value store with TTL support (in-memory & PostgreSQL) | [README](kv/README.md) |
+| **[kv](kv/)** | Key-value store with TTL, encryption, and atomic updates (in-memory & PostgreSQL) | [README](kv/README.md) |
 
 ## Quick Start
 
 Install individual packages:
 
 ```bash
+# String case conversion
+go get github.com/erlorenz/go-toolbox/casing
+
 # Configuration management
 go get github.com/erlorenz/go-toolbox/cfgx
 
@@ -28,6 +32,24 @@ go get github.com/erlorenz/go-toolbox/kv
 ```
 
 ## Package Overview
+
+### casing - String Case Conversion
+
+Convert strings between common casing conventions.
+
+```go
+casing.ToSnake("HTTPServer")     // "http_server"
+casing.ToCamel("user_name")      // "userName"
+casing.ToPascal("api_response")  // "ApiResponse"
+casing.ToKebab("UserProfile")    // "user-profile"
+```
+
+**Features:**
+- Handles acronyms correctly (e.g., "HTTPServer" → "http_server")
+- Preserves word boundaries with dots
+- No dependencies, just standard library
+
+[Full documentation →](casing/README.md)
 
 ### cfgx - Configuration Management
 
@@ -71,7 +93,7 @@ broker.Publish(ctx, "events", []byte("hello"))
 
 ### kv - Key-Value Store
 
-Simple key-value store with TTL support and multiple backends.
+Simple key-value store with TTL support, encryption, and multiple backends.
 
 ```go
 store := kv.NewMemoryStore()
@@ -82,6 +104,8 @@ data, _ := store.Get(ctx, "user:123")
 **Features:**
 - `[]byte` interface - handle your own serialization
 - TTL/expiration support
+- Atomic updates with `Update()` method
+- Built-in AES-256-GCM encryption (PostgreSQL)
 - Prefix-based key listing
 - In-memory (auto-cleanup) and PostgreSQL (opt-in cleanup) backends
 - UNLOGGED table support for 2-3x faster Postgres performance
@@ -97,6 +121,7 @@ data, _ := store.Get(ctx, "user:123")
 go test -v ./...
 
 # Specific package
+go test -v ./casing
 go test -v ./cfgx
 go test -v ./pubsub
 go test -v ./kv
@@ -109,6 +134,7 @@ Using mise:
 mise run test:all
 
 # Specific package
+mise run test:casing
 mise run test:cfgx
 ```
 
