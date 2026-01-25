@@ -57,9 +57,45 @@ This package is designed for the **"no build" philosophy**:
 
 Unlike Rails Propshaft which renames files (`app-abc123.css`), we use query strings (`app.css?v=abc123`):
 
-1. **No rewriting** - No need to process imports inside JS/CSS files
+1. **Automatic rewriting** - CSS `url()` and JS `import` statements are rewritten to versioned paths
 2. **Same cache busting** - Browsers treat different query strings as different resources
 3. **Simpler** - The original file structure is preserved
+
+### CSS/JS Compilation
+
+Like Propshaft, we automatically rewrite relative references in CSS and JS files:
+
+**CSS:**
+```css
+/* Input */
+@import "./reset.css";
+body { background: url("../images/bg.png"); }
+
+/* Output (in production) */
+@import "/static/css/reset.css?v=abc123";
+body { background: url("/static/images/bg.png?v=def456"); }
+```
+
+**JS:**
+```js
+// Input
+import { foo } from "./utils.js";
+export * from "./module.js";
+
+// Output (in production)
+import { foo } from "/static/js/utils.js?v=abc123";
+export * from "/static/js/module.js?v=def456";
+```
+
+**What gets rewritten:**
+- CSS: `url()`, `@import`
+- JS: `import`, `export from`, dynamic `import()`
+
+**What is left unchanged:**
+- Remote URLs (`https://...`, `//...`)
+- Data URIs (`data:...`)
+- Bare specifiers (`import "lodash"`) - handled by import map
+- References to unknown files
 
 ## Features
 
@@ -89,18 +125,24 @@ mgr, _ := assetmgr.New(
 In development, use `os.DirFS` for live reloading:
 
 ```go
-// Production: embedded
+// Production: embedded + compiled
 //go:embed static
 var staticFS embed.FS
 
-// Development: live filesystem
+// Development: live filesystem, no compilation
 devFS := os.DirFS("./static")
 
 mgr, _ := assetmgr.New(
     assetmgr.WithFS("/static", devFS),
-    assetmgr.WithDevMode(true),  // Re-reads files on each request
+    assetmgr.WithDevMode(true),
 )
 ```
+
+**Dev mode behavior:**
+- No CSS/JS compilation (files served as-is for hot reload)
+- No caching headers
+- Files re-read on each request
+- Import maps regenerated on each request
 
 Dev mode is automatically enabled when `APP_ENV != "production"`. Customize with `WithEnvVar()`:
 
@@ -108,11 +150,13 @@ Dev mode is automatically enabled when `APP_ENV != "production"`. Customize with
 assetmgr.WithEnvVar("GO_ENV")  // Check GO_ENV instead of APP_ENV
 ```
 
+Explicit `WithDevMode()` always wins over the environment variable.
+
 ### Import Map Support
 
 For Deno-style ES modules, use import maps with automatic path rewriting:
 
-**importmap.json:**
+**importmap.json or deno.json:**
 ```json
 {
     "imports": {
@@ -142,6 +186,21 @@ mgr, _ := assetmgr.New(
 ```
 
 Local paths are automatically rewritten to include version hashes. Remote URLs are preserved.
+
+### Multiple Import Maps (Monorepo)
+
+Multiple import maps can be merged, with later entries overwriting earlier ones:
+
+```go
+mgr, _ := assetmgr.New(
+    assetmgr.WithFS("/static", staticFS),
+    assetmgr.WithFS("/app", appFS),
+    assetmgr.WithImportMap("/static/deno.json"),  // Base imports
+    assetmgr.WithImportMap("/app/deno.json"),     // App-specific (wins on conflict)
+)
+```
+
+Both `importmap.json` and `deno.json` formats are supported (same structure - `imports` and `scopes` at the root level).
 
 ### Pre-Rendered Tags
 
@@ -300,7 +359,8 @@ The Manager is safe for concurrent use. Assets are accessed via read lock.
 | Go embed.FS | Yes | N/A | N/A |
 | Live reload (dev) | Yes | Yes | Yes |
 | Bundling | No | No | Yes |
-| CSS processing | No | Basic | Yes |
+| CSS url() rewriting | Yes | Yes | Yes |
+| JS import rewriting | Yes | No | Yes |
 
 ## Sources
 

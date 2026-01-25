@@ -84,6 +84,10 @@ type Asset struct {
 
 	// fsPath is the path within the filesystem.
 	fsPath string
+
+	// compiled holds the compiled content for CSS/JS files.
+	// nil for non-compiled assets (images, fonts, etc.).
+	compiled []byte
 }
 
 // ImportMap represents a JavaScript import map structure.
@@ -104,17 +108,20 @@ type Manager struct {
 	// sources is a list of filesystem sources in order
 	sources []fsSource
 
-	// importMap is the parsed and rewritten import map
+	// importMap is the merged import map from all sources
 	importMap *ImportMap
 
-	// importMapPath is the path to the import map file
-	importMapPath string
+	// importMapPaths is the list of import map paths to load (in order)
+	importMapPaths []string
 
 	// importMapTag is the pre-rendered import map script tag
 	importMapTag string
 
-	// devMode disables caching and re-reads files on each request
+	// devMode disables caching, compilation, and re-reads files on each request
 	devMode bool
+
+	// devModeSet tracks if WithDevMode was explicitly called
+	devModeSet bool
 
 	// envVar is the environment variable to check for dev mode
 	envVar string
@@ -161,12 +168,17 @@ func WithFS(prefix string, fsys fs.FS) Option {
 // WithImportMap loads an import map from the specified path within the filesystems.
 // The import map will be rewritten to include versioned paths for local assets.
 //
+// Multiple import maps can be specified by calling WithImportMap multiple times.
+// Maps are merged in order, with later entries overwriting earlier ones.
+// Both importmap.json and deno.json formats are supported (same structure).
+//
 // Example:
 //
-//	WithImportMap("/static/importmap.json")
+//	WithImportMap("/static/deno.json")        // Base imports
+//	WithImportMap("/app/importmap.json")      // App-specific (overwrites)
 func WithImportMap(path string) Option {
 	return func(m *Manager) error {
-		m.importMapPath = path
+		m.importMapPaths = append(m.importMapPaths, path)
 		return nil
 	}
 }
@@ -174,6 +186,7 @@ func WithImportMap(path string) Option {
 // WithDevMode explicitly enables or disables development mode.
 // In dev mode:
 //   - No caching headers are sent
+//   - No CSS/JS compilation (files served as-is for hot reload)
 //   - Files are re-read on each request (useful with os.DirFS)
 //   - Import map is regenerated on each request
 //
@@ -182,6 +195,7 @@ func WithImportMap(path string) Option {
 func WithDevMode(enabled bool) Option {
 	return func(m *Manager) error {
 		m.devMode = enabled
+		m.devModeSet = true
 		return nil
 	}
 }
@@ -200,13 +214,15 @@ func WithEnvVar(name string) Option {
 // At least one WithFS option must be provided.
 //
 // The constructor walks all filesystems, hashes file contents,
-// and pre-renders script/link tags. This happens once at startup.
+// compiles CSS/JS (unless in dev mode), and pre-renders script/link tags.
+// This happens once at startup.
 func New(opts ...Option) (*Manager, error) {
 	m := &Manager{
-		assets:  make(map[string]*Asset),
-		sources: make([]fsSource, 0),
-		envVar:  "APP_ENV",
-		modTime: time.Now(),
+		assets:         make(map[string]*Asset),
+		sources:        make([]fsSource, 0),
+		importMapPaths: make([]string, 0),
+		envVar:         "APP_ENV",
+		modTime:        time.Now(),
 	}
 
 	// Apply options
@@ -222,10 +238,8 @@ func New(opts ...Option) (*Manager, error) {
 	}
 
 	// Determine dev mode from environment if not explicitly set
-	// Check if WithDevMode was called by seeing if it's still false
-	// (we need a separate flag, but for simplicity, check env var)
-	if !m.devMode && os.Getenv(m.envVar) != "production" {
-		m.devMode = true
+	if !m.devModeSet {
+		m.devMode = os.Getenv(m.envVar) != "production"
 	}
 
 	// Build asset map
@@ -251,9 +265,14 @@ func (m *Manager) build() error {
 		}
 	}
 
-	// Load and rewrite import map if specified
-	if m.importMapPath != "" {
-		if err := m.loadImportMap(); err != nil {
+	// Compile CSS/JS files (skip in dev mode)
+	if !m.devMode {
+		m.compileAssets()
+	}
+
+	// Load and merge import maps
+	if len(m.importMapPaths) > 0 {
+		if err := m.loadImportMaps(); err != nil {
 			return err
 		}
 	}
@@ -329,6 +348,55 @@ func hashContent(content []byte) string {
 	return fmt.Sprintf("%x", h.Sum64())
 }
 
+// compileAssets compiles CSS and JS files, rewriting relative imports.
+func (m *Manager) compileAssets() {
+	// Create a resolver function that looks up versioned paths
+	resolve := func(logicalPath string) string {
+		if asset, ok := m.assets[logicalPath]; ok {
+			return asset.VersionedPath
+		}
+		return ""
+	}
+
+	for _, asset := range m.assets {
+		ext := strings.ToLower(filepath.Ext(asset.Path))
+
+		switch ext {
+		case ".css":
+			// Read and compile CSS
+			content, err := fs.ReadFile(asset.fsys, asset.fsPath)
+			if err != nil {
+				continue
+			}
+			compiled := compileCSS(content, asset.Path, resolve)
+			// Only store if content changed
+			if string(compiled) != string(content) {
+				asset.compiled = compiled
+				// Update hash and versioned path based on compiled content
+				asset.Hash = hashContent(compiled)
+				asset.VersionedPath = fmt.Sprintf("%s?v=%s", asset.Path, asset.Hash)
+				asset.LinkTag = m.renderLinkTag(asset)
+			}
+
+		case ".js", ".mjs", ".ts":
+			// Read and compile JS
+			content, err := fs.ReadFile(asset.fsys, asset.fsPath)
+			if err != nil {
+				continue
+			}
+			compiled := compileJS(content, asset.Path, resolve)
+			// Only store if content changed
+			if string(compiled) != string(content) {
+				asset.compiled = compiled
+				// Update hash and versioned path based on compiled content
+				asset.Hash = hashContent(compiled)
+				asset.VersionedPath = fmt.Sprintf("%s?v=%s", asset.Path, asset.Hash)
+				asset.ScriptTag = m.renderScriptTag(asset)
+			}
+		}
+	}
+}
+
 // renderScriptTag creates a <script> tag for JavaScript files.
 func (m *Manager) renderScriptTag(asset *Asset) string {
 	ext := strings.ToLower(filepath.Ext(asset.Path))
@@ -352,12 +420,33 @@ func (m *Manager) renderLinkTag(asset *Asset) string {
 	return ""
 }
 
-// loadImportMap loads and processes the import map.
-func (m *Manager) loadImportMap() error {
+// loadImportMaps loads and merges all import maps.
+func (m *Manager) loadImportMaps() error {
+	// Initialize merged import map
+	m.importMap = &ImportMap{
+		Imports: make(map[string]string),
+		Scopes:  make(map[string]map[string]string),
+	}
+
+	// Load and merge each import map in order
+	for _, importMapPath := range m.importMapPaths {
+		if err := m.loadAndMergeImportMap(importMapPath); err != nil {
+			return err
+		}
+	}
+
+	// Pre-render the import map tag
+	m.importMapTag = m.renderImportMapTag()
+
+	return nil
+}
+
+// loadAndMergeImportMap loads a single import map and merges it into the existing one.
+func (m *Manager) loadAndMergeImportMap(importMapPath string) error {
 	// Find the import map file in our assets
-	asset, ok := m.assets[m.importMapPath]
+	asset, ok := m.assets[importMapPath]
 	if !ok {
-		return fmt.Errorf("%w: import map not found at %s", ErrInvalidImportMap, m.importMapPath)
+		return fmt.Errorf("%w: import map not found at %s", ErrInvalidImportMap, importMapPath)
 	}
 
 	// Read the file
@@ -366,36 +455,39 @@ func (m *Manager) loadImportMap() error {
 		return fmt.Errorf("%w: %v", ErrInvalidImportMap, err)
 	}
 
-	// Parse the import map
+	// Parse the import map (works for both importmap.json and deno.json)
 	var im ImportMap
 	if err := json.Unmarshal(content, &im); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidImportMap, err)
 	}
 
-	// Rewrite local paths in imports
+	// Merge imports (later wins)
 	if im.Imports != nil {
 		for key, value := range im.Imports {
+			// Rewrite local paths to versioned paths
 			if rewritten := m.rewriteImportPath(value); rewritten != "" {
-				im.Imports[key] = rewritten
+				m.importMap.Imports[key] = rewritten
+			} else {
+				m.importMap.Imports[key] = value
 			}
 		}
 	}
 
-	// Rewrite local paths in scopes
+	// Merge scopes (later wins per scope)
 	if im.Scopes != nil {
 		for scope, imports := range im.Scopes {
+			if m.importMap.Scopes[scope] == nil {
+				m.importMap.Scopes[scope] = make(map[string]string)
+			}
 			for key, value := range imports {
 				if rewritten := m.rewriteImportPath(value); rewritten != "" {
-					im.Scopes[scope][key] = rewritten
+					m.importMap.Scopes[scope][key] = rewritten
+				} else {
+					m.importMap.Scopes[scope][key] = value
 				}
 			}
 		}
 	}
-
-	m.importMap = &im
-
-	// Pre-render the import map tag
-	m.importMapTag = m.renderImportMapTag()
 
 	return nil
 }
@@ -582,7 +674,7 @@ func (m *Manager) Reload() error {
 //   - Cache-Control: no-cache (allows caching but requires revalidation)
 //   - ETag: based on content hash
 //
-// In dev mode, no caching headers are set.
+// In dev mode, no caching headers are set and files are re-read on each request.
 func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// In dev mode, rebuild on each request
 	if m.devMode {
@@ -604,21 +696,6 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Open the file
-	file, err := asset.fsys.Open(asset.fsPath)
-	if err != nil {
-		http.Error(w, "Failed to read asset", http.StatusInternalServerError)
-		return
-	}
-	defer file.Close()
-
-	// Get file info for ServeContent
-	stat, err := file.Stat()
-	if err != nil {
-		http.Error(w, "Failed to read asset", http.StatusInternalServerError)
-		return
-	}
-
 	// Check if this is a versioned request
 	hasVersion := r.URL.Query().Has("v")
 
@@ -636,6 +713,28 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Set content type
 	w.Header().Set("Content-Type", asset.ContentType)
+
+	// If we have compiled content, serve that
+	if asset.compiled != nil {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(asset.compiled)))
+		w.Write(asset.compiled)
+		return
+	}
+
+	// Otherwise, serve from filesystem
+	file, err := asset.fsys.Open(asset.fsPath)
+	if err != nil {
+		http.Error(w, "Failed to read asset", http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	// Get file info for ServeContent
+	stat, err := file.Stat()
+	if err != nil {
+		http.Error(w, "Failed to read asset", http.StatusInternalServerError)
+		return
+	}
 
 	// Use ServeContent for proper handling of Range requests, If-Modified-Since, etc.
 	// Need a ReadSeeker for ServeContent
