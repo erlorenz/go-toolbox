@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -295,6 +296,58 @@ func (s *PostgresStore) Set(ctx context.Context, key string, value []byte, ttl t
 	}
 
 	return nil
+}
+
+// SetMany stores multiple key-value pairs with the same TTL in a single round trip.
+// This is more efficient than calling Set multiple times.
+// If ttl is 0, the values never expire.
+// Encrypts all values if encryption is enabled.
+func (s *PostgresStore) SetMany(ctx context.Context, items map[string][]byte, ttl time.Duration) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	fullTableName := pgx.Identifier{s.schema, s.tableName}.Sanitize()
+
+	var expiresAt any
+	if ttl > 0 {
+		expiresAt = time.Now().Add(ttl)
+	}
+
+	// Build multi-row INSERT: INSERT INTO table (key_hash, key, value, expires_at, updated_at)
+	// VALUES ($1, $2, $3, $4, NOW()), ($5, $6, $7, $8, NOW()), ...
+	// ON CONFLICT (key_hash) DO UPDATE SET ...
+
+	args := make([]any, 0, len(items)*4)
+	valueStrings := make([]string, 0, len(items))
+	paramIdx := 1
+
+	for key, value := range items {
+		// Encrypt if encryptor is configured
+		dataToStore := value
+		if s.encryptor != nil {
+			encrypted, err := s.encryptor.Encrypt(ctx, value)
+			if err != nil {
+				return fmt.Errorf("encryption failed for key %s: %w", key, err)
+			}
+			dataToStore = encrypted
+		}
+
+		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, NOW())",
+			paramIdx, paramIdx+1, paramIdx+2, paramIdx+3))
+		args = append(args, hashKey(key), key, dataToStore, expiresAt)
+		paramIdx += 4
+	}
+
+	query := fmt.Sprintf(`
+		INSERT INTO %s (key_hash, key, value, expires_at, updated_at)
+		VALUES %s
+		ON CONFLICT (key_hash)
+		DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at, updated_at = NOW()
+	`, fullTableName, strings.Join(valueStrings, ", "))
+
+	_, err := s.pool.Exec(ctx, query, args...)
+	return err
 }
 
 // Update atomically reads, modifies, and writes a value using a transaction.

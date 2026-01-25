@@ -221,4 +221,96 @@ func TestMemoryStore(t *testing.T) {
 			t.Errorf("Get after expiration returned %v, want ErrNotFound", err)
 		}
 	})
+
+	t.Run("SetMany", func(t *testing.T) {
+		items := map[string][]byte{
+			"batch:1": []byte("value1"),
+			"batch:2": []byte("value2"),
+			"batch:3": []byte("value3"),
+		}
+
+		err := store.SetMany(ctx, items, 0)
+		if err != nil {
+			t.Fatalf("SetMany failed: %v", err)
+		}
+
+		// Verify all items were set
+		for key, want := range items {
+			got, err := store.Get(ctx, key)
+			if err != nil {
+				t.Errorf("Get(%q) failed: %v", key, err)
+				continue
+			}
+			if string(got) != string(want) {
+				t.Errorf("Get(%q) = %q, want %q", key, got, want)
+			}
+		}
+	})
+
+	t.Run("SetManyEmpty", func(t *testing.T) {
+		// Empty map should not error
+		err := store.SetMany(ctx, map[string][]byte{}, 0)
+		if err != nil {
+			t.Fatalf("SetMany with empty map failed: %v", err)
+		}
+	})
+
+	t.Run("SetManyOverwrite", func(t *testing.T) {
+		key := "batch:overwrite"
+
+		// Set initial value
+		err := store.Set(ctx, key, []byte("original"), 0)
+		if err != nil {
+			t.Fatalf("Set failed: %v", err)
+		}
+
+		// Overwrite with SetMany
+		items := map[string][]byte{
+			key: []byte("updated"),
+		}
+		err = store.SetMany(ctx, items, 0)
+		if err != nil {
+			t.Fatalf("SetMany failed: %v", err)
+		}
+
+		// Verify overwrite
+		got, err := store.Get(ctx, key)
+		if err != nil {
+			t.Fatalf("Get failed: %v", err)
+		}
+		if string(got) != "updated" {
+			t.Errorf("Get = %q, want 'updated'", got)
+		}
+	})
+
+	t.Run("SetManyWithTTL", func(t *testing.T) {
+		items := map[string][]byte{
+			"batch:ttl1": []byte("expires1"),
+			"batch:ttl2": []byte("expires2"),
+		}
+
+		err := store.SetMany(ctx, items, 100*time.Millisecond)
+		if err != nil {
+			t.Fatalf("SetMany with TTL failed: %v", err)
+		}
+
+		// Should exist immediately
+		for key := range items {
+			_, err := store.Get(ctx, key)
+			if err != nil {
+				t.Errorf("Get(%q) before expiration failed: %v", key, err)
+			}
+		}
+
+		// Wait for expiration
+		time.Sleep(150 * time.Millisecond)
+
+		// Should all be expired
+		for key := range items {
+			_, err := store.Get(ctx, key)
+			if err != kv.ErrNotFound {
+				t.Errorf("Get(%q) after expiration returned %v, want ErrNotFound", key, err)
+			}
+		}
+	})
 }
