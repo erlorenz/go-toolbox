@@ -15,6 +15,7 @@ go get github.com/erlorenz/go-toolbox/<package-name>
 - `cfgx` - Configuration management from multiple sources (env vars, flags, docker secrets, defaults)
 - `pubsub` - Simple publish-subscribe messaging (in-memory & PostgreSQL)
 - `kv` - Key-value store with TTL, encryption, and atomic updates (in-memory & PostgreSQL)
+- `assetmgr` - Static asset manager with versioning, import maps, and immutable caching
 
 ## Documentation Structure
 
@@ -24,6 +25,7 @@ go get github.com/erlorenz/go-toolbox/<package-name>
   - [cfgx/README.md](../cfgx/README.md)
   - [pubsub/README.md](../pubsub/README.md)
   - [kv/README.md](../kv/README.md)
+  - [assetmgr/README.md](../assetmgr/README.md)
 
 ## Development Commands
 
@@ -40,6 +42,7 @@ go test -v ./casing
 go test -v ./cfgx
 go test -v ./pubsub
 go test -v ./kv
+go test -v ./assetmgr
 
 # Run specific test
 go test -v ./casing -run TestToSnake
@@ -210,6 +213,68 @@ Auto-generated based on configuration:
 - [aes_encryptor.go](../kv/aes_encryptor.go) - Built-in AES-256-GCM encryptor
 
 See [kv/README.md](../kv/README.md) for full documentation.
+
+### assetmgr - Static Asset Manager
+
+**Core Design:** Static asset serving with content-based versioning and import map support. Follows the "no build" philosophy - no bundling or transpiling.
+
+**Key Components:**
+- `Manager` - Main type that walks filesystems, hashes content, serves assets
+- `Asset` struct - Represents an asset with path, hash, pre-rendered tags
+- `ImportMap` - JavaScript import map with automatic path rewriting
+
+**Options:**
+- `WithFS(prefix, fs.FS)` - Add filesystem with URL prefix
+- `WithImportMap(path)` - Load and rewrite import map
+- `WithDevMode(bool)` - Enable dev mode (no caching, re-reads files)
+- `WithEnvVar(name)` - Environment variable for dev mode detection
+
+**Versioning Strategy:**
+- Query string versioning: `/static/app.js?v=abc123`
+- FNV-1a content hashing (same as kv package)
+- No file renaming = no import rewriting needed
+
+**HTTP Caching:**
+- Versioned requests (`?v=`): `Cache-Control: public, max-age=31536000, immutable`
+- Non-versioned: `Cache-Control: no-cache` with ETag
+
+**Pre-rendered Tags:**
+- `asset.ScriptTag` - `<script type="module" src="...?v=hash"></script>`
+- `asset.CSSTag` - `<link rel="stylesheet" href="...?v=hash">`
+- Computed at startup, zero runtime overhead
+
+**Import Map Handling:**
+- Parses JSON import map from assets
+- Rewrites local paths to versioned paths
+- Preserves remote URLs (CDN, etc.)
+- `mgr.ImportMapTag()` returns ready-to-use `<script type="importmap">`
+
+**Helper Methods:**
+- `Get(path)` / `MustGet(path)` - Get single asset
+- `All()` - All assets sorted by path
+- `ByExtension(".js")` - Filter by extension
+- `ByPrefix("/static/js/")` - Filter by path prefix
+- `ScriptTags(prefix)` - All script tags for JS files under prefix
+- `CSSTags(prefix)` - All CSS link tags for files under prefix
+- `ModulePreloadTag(key)` - Modulepreload tag for import map key
+- `ModulePreloadTags(keys...)` - Multiple modulepreload tags
+
+**Dev Mode:**
+- Enabled when `APP_ENV != "production"` (or custom env var)
+- Re-reads files on each request (for `os.DirFS`)
+- No caching headers
+
+**Use Cases:**
+- htmx + Templ applications
+- Deno-style ES modules with import maps
+- Monorepo with assets in multiple locations
+
+**Testing patterns:** Black-box tests with `testing/fstest.MapFS`.
+
+**Important files:**
+- [assetmgr.go](../assetmgr/assetmgr.go) - All types and implementation
+
+See [assetmgr/README.md](../assetmgr/README.md) for full documentation.
 
 ## Common Patterns
 

@@ -12,6 +12,7 @@ A collection of lightweight, focused Go packages for building web applications a
 | **[cfgx](cfgx/)** | Configuration management from env vars, flags, Docker secrets | [README](cfgx/README.md) |
 | **[pubsub](pubsub/)** | Simple publish-subscribe messaging (in-memory & PostgreSQL) | [README](pubsub/README.md) |
 | **[kv](kv/)** | Key-value store with TTL, encryption, and atomic updates (in-memory & PostgreSQL) | [README](kv/README.md) |
+| **[assetmgr](assetmgr/)** | Static asset manager with versioning, import maps, and immutable caching | [README](assetmgr/README.md) |
 
 ## Quick Start
 
@@ -29,6 +30,9 @@ go get github.com/erlorenz/go-toolbox/pubsub
 
 # Key-value store
 go get github.com/erlorenz/go-toolbox/kv
+
+# Static asset manager
+go get github.com/erlorenz/go-toolbox/assetmgr
 ```
 
 ## Package Overview
@@ -112,6 +116,32 @@ data, _ := store.Get(ctx, "user:123")
 
 [Full documentation →](kv/README.md)
 
+### assetmgr - Static Asset Manager
+
+Static asset versioning with query string cache busting and import map support.
+
+```go
+//go:embed static
+var staticFS embed.FS
+
+mgr, _ := assetmgr.New(assetmgr.WithFS("/static", staticFS))
+http.Handle("/static/", mgr)
+
+// In templates:
+asset := mgr.Get("/static/js/app.js")
+asset.ScriptTag // <script type="module" src="/static/js/app.js?v=abc123"></script>
+```
+
+**Features:**
+- FNV-1a content hashing with query string versioning (`?v=hash`)
+- Multiple fs.FS sources with prefixes
+- Import map support with automatic path rewriting
+- Pre-rendered script/link tags
+- Immutable caching headers for versioned requests
+- Dev mode with file re-reading
+
+[Full documentation →](assetmgr/README.md)
+
 ## Development
 
 ### Running Tests
@@ -125,6 +155,7 @@ go test -v ./casing
 go test -v ./cfgx
 go test -v ./pubsub
 go test -v ./kv
+go test -v ./assetmgr
 ```
 
 Using mise:
