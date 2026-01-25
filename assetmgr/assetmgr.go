@@ -72,9 +72,9 @@ type Asset struct {
 	// Empty for non-JS files.
 	ScriptTag string
 
-	// LinkTag is a pre-rendered <link> tag for CSS files.
+	// CSSTag is a pre-rendered <link rel="stylesheet"> tag for CSS files.
 	// Empty for non-CSS files.
-	LinkTag string
+	CSSTag string
 
 	// Size is the file size in bytes.
 	Size int64
@@ -334,7 +334,7 @@ func (m *Manager) walkFS(src fsSource) error {
 
 		// Pre-render tags
 		asset.ScriptTag = m.renderScriptTag(asset)
-		asset.LinkTag = m.renderLinkTag(asset)
+		asset.CSSTag = m.renderCSSTag(asset)
 
 		m.assets[logicalPath] = asset
 		return nil
@@ -375,7 +375,7 @@ func (m *Manager) compileAssets() {
 				// Update hash and versioned path based on compiled content
 				asset.Hash = hashContent(compiled)
 				asset.VersionedPath = fmt.Sprintf("%s?v=%s", asset.Path, asset.Hash)
-				asset.LinkTag = m.renderLinkTag(asset)
+				asset.CSSTag = m.renderCSSTag(asset)
 			}
 
 		case ".js", ".mjs", ".ts":
@@ -411,8 +411,8 @@ func (m *Manager) renderScriptTag(asset *Asset) string {
 	}
 }
 
-// renderLinkTag creates a <link> tag for CSS files.
-func (m *Manager) renderLinkTag(asset *Asset) string {
+// renderCSSTag creates a <link rel="stylesheet"> tag for CSS files.
+func (m *Manager) renderCSSTag(asset *Asset) string {
 	ext := strings.ToLower(filepath.Ext(asset.Path))
 	if ext == ".css" {
 		return fmt.Sprintf(`<link rel="stylesheet" href="%s">`, asset.VersionedPath)
@@ -619,15 +619,15 @@ func (m *Manager) ScriptTags(prefix string) string {
 	return strings.Join(tags, "\n")
 }
 
-// LinkTags returns pre-rendered <link> tags for all CSS files under the given prefix.
+// CSSTags returns pre-rendered <link rel="stylesheet"> tags for all CSS files under the given prefix.
 // Returns a single string with all tags joined by newlines.
-func (m *Manager) LinkTags(prefix string) string {
+func (m *Manager) CSSTags(prefix string) string {
 	assets := m.ByPrefix(prefix)
 	var tags []string
 
 	for _, asset := range assets {
-		if asset.LinkTag != "" {
-			tags = append(tags, asset.LinkTag)
+		if asset.CSSTag != "" {
+			tags = append(tags, asset.CSSTag)
 		}
 	}
 
@@ -655,6 +655,52 @@ func (m *Manager) ImportMapJSON() []byte {
 
 	data, _ := json.Marshal(m.importMap)
 	return data
+}
+
+// ModulePreloadTag returns a <link rel="modulepreload"> tag for the given import map key.
+// The importKey should be a key in the import map (e.g., "app", "utils").
+// Returns empty string if the import map is not configured or the key doesn't exist.
+//
+// Example:
+//
+//	mgr.ModulePreloadTag("app")
+//	// <link rel="modulepreload" href="/static/js/app.js?v=abc123">
+func (m *Manager) ModulePreloadTag(importKey string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.importMap == nil || m.importMap.Imports == nil {
+		return ""
+	}
+
+	href, ok := m.importMap.Imports[importKey]
+	if !ok {
+		return ""
+	}
+
+	return fmt.Sprintf(`<link rel="modulepreload" href="%s">`, href)
+}
+
+// ModulePreloadTags returns <link rel="modulepreload"> tags for multiple import map keys.
+// Returns a single string with all tags joined by newlines.
+// Keys that don't exist in the import map are silently skipped.
+//
+// Example:
+//
+//	mgr.ModulePreloadTags("app", "utils", "htmx")
+//	// <link rel="modulepreload" href="/static/js/app.js?v=abc123">
+//	// <link rel="modulepreload" href="/static/js/utils.js?v=def456">
+//	// <link rel="modulepreload" href="https://cdn.example.com/htmx.js">
+func (m *Manager) ModulePreloadTags(importKeys ...string) string {
+	var tags []string
+
+	for _, key := range importKeys {
+		if tag := m.ModulePreloadTag(key); tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+
+	return strings.Join(tags, "\n")
 }
 
 // Reload rebuilds the asset map.

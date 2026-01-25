@@ -388,8 +388,8 @@ func TestCompiledContentHash(t *testing.T) {
 		t.Errorf("expected versioned path, got: %s", asset.VersionedPath)
 	}
 
-	// LinkTag should use the versioned path
-	if !strings.Contains(asset.LinkTag, asset.VersionedPath) {
-		t.Errorf("expected LinkTag to use versioned path, got: %s", asset.LinkTag)
+	// CSSTag should use the versioned path
+	if !strings.Contains(asset.CSSTag, asset.VersionedPath) {
+		t.Errorf("expected CSSTag to use versioned path, got: %s", asset.CSSTag)
 	}
 }

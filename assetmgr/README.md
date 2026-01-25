@@ -202,6 +202,24 @@ mgr, _ := assetmgr.New(
 
 Both `importmap.json` and `deno.json` formats are supported (same structure - `imports` and `scopes` at the root level).
 
+### Module Preloading
+
+Preload ES modules using import map keys for faster loading:
+
+```go
+// Single module preload
+mgr.ModulePreloadTag("app")
+// <link rel="modulepreload" href="/static/js/app.js?v=abc123">
+
+// Multiple modules
+mgr.ModulePreloadTags("app", "utils", "htmx")
+// <link rel="modulepreload" href="/static/js/app.js?v=abc123">
+// <link rel="modulepreload" href="/static/js/utils.js?v=def456">
+// <link rel="modulepreload" href="https://cdn.example.com/htmx.js">
+```
+
+Module preloading tells the browser to fetch modules early, before they're needed by `import` statements. This improves performance for critical modules.
+
 ### Pre-Rendered Tags
 
 Script and link tags are pre-rendered at startup for zero runtime overhead:
@@ -211,7 +229,7 @@ asset := mgr.Get("/static/js/app.js")
 asset.ScriptTag  // <script type="module" src="/static/js/app.js?v=abc123"></script>
 
 asset = mgr.Get("/static/css/style.css")
-asset.LinkTag    // <link rel="stylesheet" href="/static/css/style.css?v=def456">
+asset.CSSTag     // <link rel="stylesheet" href="/static/css/style.css?v=def456">
 ```
 
 ### Batch Tag Generation
@@ -225,7 +243,7 @@ mgr.ScriptTags("/static/js/")
 // <script type="module" src="/static/js/utils.js?v=def456"></script>
 
 // All CSS under /static/css/
-mgr.LinkTags("/static/css/")
+mgr.CSSTags("/static/css/")
 // <link rel="stylesheet" href="/static/css/main.css?v=ghi789">
 // <link rel="stylesheet" href="/static/css/theme.css?v=jkl012">
 ```
@@ -262,7 +280,7 @@ type Asset struct {
     Hash          string  // "abc123" (FNV-1a hex)
     ContentType   string  // "text/javascript; charset=utf-8"
     ScriptTag     string  // Pre-rendered <script> tag (JS only)
-    LinkTag       string  // Pre-rendered <link> tag (CSS only)
+    CSSTag        string  // Pre-rendered <link rel="stylesheet"> tag (CSS only)
     Size          int64   // File size in bytes
 }
 ```
@@ -286,9 +304,11 @@ type Asset struct {
 | `ByExtension(ext) []*Asset` | Get assets by extension (e.g., ".js") |
 | `ByPrefix(prefix) []*Asset` | Get assets under path prefix |
 | `ScriptTags(prefix) string` | All `<script>` tags for JS files under prefix |
-| `LinkTags(prefix) string` | All `<link>` tags for CSS files under prefix |
+| `CSSTags(prefix) string` | All `<link rel="stylesheet">` tags for CSS files under prefix |
 | `ImportMapTag() string` | `<script type="importmap">` with rewritten paths |
 | `ImportMapJSON() []byte` | Raw import map JSON with rewritten paths |
+| `ModulePreloadTag(key) string` | `<link rel="modulepreload">` for import map key |
+| `ModulePreloadTags(keys...) string` | Multiple modulepreload tags for import map keys |
 | `Reload() error` | Rebuild asset map (for dev mode) |
 | `ServeHTTP(w, r)` | Serve assets with caching headers |
 
@@ -299,7 +319,8 @@ type Asset struct {
 templ Head(mgr *assetmgr.Manager) {
     <head>
         @templ.Raw(mgr.ImportMapTag())
-        @templ.Raw(mgr.LinkTags("/static/css/"))
+        @templ.Raw(mgr.CSSTags("/static/css/"))
+        @templ.Raw(mgr.ModulePreloadTags("app", "utils"))
     </head>
 }
 

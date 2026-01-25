@@ -171,8 +171,8 @@ func TestPreRenderedTags(t *testing.T) {
 		if !strings.Contains(asset.ScriptTag, asset.VersionedPath) {
 			t.Errorf("expected versioned path in script tag")
 		}
-		if asset.LinkTag != "" {
-			t.Errorf("expected no link tag for JS file, got %s", asset.LinkTag)
+		if asset.CSSTag != "" {
+			t.Errorf("expected no link tag for JS file, got %s", asset.CSSTag)
 		}
 	})
 
@@ -187,10 +187,10 @@ func TestPreRenderedTags(t *testing.T) {
 		}
 
 		asset := mgr.Get("/static/style.css")
-		if !strings.Contains(asset.LinkTag, `<link rel="stylesheet"`) {
-			t.Errorf("expected link tag, got %s", asset.LinkTag)
+		if !strings.Contains(asset.CSSTag, `<link rel="stylesheet"`) {
+			t.Errorf("expected link tag, got %s", asset.CSSTag)
 		}
-		if !strings.Contains(asset.LinkTag, asset.VersionedPath) {
+		if !strings.Contains(asset.CSSTag, asset.VersionedPath) {
 			t.Errorf("expected versioned path in link tag")
 		}
 		if asset.ScriptTag != "" {
@@ -212,8 +212,8 @@ func TestPreRenderedTags(t *testing.T) {
 		if asset.ScriptTag != "" {
 			t.Errorf("expected no script tag, got %s", asset.ScriptTag)
 		}
-		if asset.LinkTag != "" {
-			t.Errorf("expected no link tag, got %s", asset.LinkTag)
+		if asset.CSSTag != "" {
+			t.Errorf("expected no link tag, got %s", asset.CSSTag)
 		}
 	})
 }
@@ -293,7 +293,7 @@ func TestScriptTags(t *testing.T) {
 	}
 }
 
-func TestLinkTags(t *testing.T) {
+func TestCSSTags(t *testing.T) {
 	fs := fstest.MapFS{
 		"css/main.css":  &fstest.MapFile{Data: []byte("main")},
 		"css/theme.css": &fstest.MapFile{Data: []byte("theme")},
@@ -304,7 +304,7 @@ func TestLinkTags(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	tags := mgr.LinkTags("/static/css")
+	tags := mgr.CSSTags("/static/css")
 	lines := strings.Split(tags, "\n")
 	if len(lines) != 2 {
 		t.Errorf("expected 2 link tags, got %d", len(lines))
@@ -362,6 +362,77 @@ func TestImportMap(t *testing.T) {
 		)
 		if err == nil {
 			t.Error("expected error for missing import map")
+		}
+	})
+}
+
+func TestModulePreloadTag(t *testing.T) {
+	fs := fstest.MapFS{
+		"importmap.json": &fstest.MapFile{Data: []byte(`{
+			"imports": {
+				"app": "/static/js/app.js",
+				"utils": "/static/js/utils.js",
+				"lodash": "https://cdn.example.com/lodash.js"
+			}
+		}`)},
+		"js/app.js":   &fstest.MapFile{Data: []byte("export default {}")},
+		"js/utils.js": &fstest.MapFile{Data: []byte("export const foo = 1")},
+	}
+
+	t.Setenv("APP_ENV", "production")
+	mgr, err := assetmgr.New(
+		assetmgr.WithFS("/static", fs),
+		assetmgr.WithImportMap("/static/importmap.json"),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	t.Run("returns modulepreload tag for local asset", func(t *testing.T) {
+		tag := mgr.ModulePreloadTag("app")
+		if !strings.Contains(tag, `<link rel="modulepreload"`) {
+			t.Errorf("expected modulepreload tag, got %s", tag)
+		}
+		if !strings.Contains(tag, "/static/js/app.js?v=") {
+			t.Errorf("expected versioned path, got %s", tag)
+		}
+	})
+
+	t.Run("returns modulepreload tag for remote URL", func(t *testing.T) {
+		tag := mgr.ModulePreloadTag("lodash")
+		if !strings.Contains(tag, `<link rel="modulepreload"`) {
+			t.Errorf("expected modulepreload tag, got %s", tag)
+		}
+		if !strings.Contains(tag, "https://cdn.example.com/lodash.js") {
+			t.Errorf("expected remote URL, got %s", tag)
+		}
+	})
+
+	t.Run("returns empty for unknown key", func(t *testing.T) {
+		tag := mgr.ModulePreloadTag("unknown")
+		if tag != "" {
+			t.Errorf("expected empty string, got %s", tag)
+		}
+	})
+
+	t.Run("ModulePreloadTags returns multiple tags", func(t *testing.T) {
+		tags := mgr.ModulePreloadTags("app", "utils", "lodash")
+		lines := strings.Split(tags, "\n")
+		if len(lines) != 3 {
+			t.Errorf("expected 3 tags, got %d", len(lines))
+		}
+		for _, line := range lines {
+			if !strings.Contains(line, `<link rel="modulepreload"`) {
+				t.Errorf("expected modulepreload tag, got %s", line)
+			}
+		}
+	})
+
+	t.Run("ModulePreloadTags skips unknown keys", func(t *testing.T) {
+		tags := mgr.ModulePreloadTags("app", "unknown", "utils")
+		lines := strings.Split(tags, "\n")
+		if len(lines) != 2 {
+			t.Errorf("expected 2 tags (unknown skipped), got %d", len(lines))
 		}
 	})
 }

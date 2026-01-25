@@ -240,7 +240,7 @@ See [kv/README.md](../kv/README.md) for full documentation.
 
 **Pre-rendered Tags:**
 - `asset.ScriptTag` - `<script type="module" src="...?v=hash"></script>`
-- `asset.LinkTag` - `<link rel="stylesheet" href="...?v=hash">`
+- `asset.CSSTag` - `<link rel="stylesheet" href="...?v=hash">`
 - Computed at startup, zero runtime overhead
 
 **Import Map Handling:**
@@ -255,7 +255,9 @@ See [kv/README.md](../kv/README.md) for full documentation.
 - `ByExtension(".js")` - Filter by extension
 - `ByPrefix("/static/js/")` - Filter by path prefix
 - `ScriptTags(prefix)` - All script tags for JS files under prefix
-- `LinkTags(prefix)` - All link tags for CSS files under prefix
+- `CSSTags(prefix)` - All CSS link tags for files under prefix
+- `ModulePreloadTag(key)` - Modulepreload tag for import map key
+- `ModulePreloadTags(keys...)` - Multiple modulepreload tags
 
 **Dev Mode:**
 - Enabled when `APP_ENV != "production"` (or custom env var)
