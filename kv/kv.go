@@ -36,6 +36,11 @@ type Store interface {
 	// If ttl is 0, the value never expires (if backend supports expiration).
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 
+	// SetMany stores multiple key-value pairs with the same TTL.
+	// This is more efficient than calling Set multiple times as it minimizes round trips.
+	// If ttl is 0, the values never expire.
+	SetMany(ctx context.Context, items map[string][]byte, ttl time.Duration) error
+
 	// Update atomically reads, modifies, and writes a value.
 	// The function receives the current value (or nil if key doesn't exist/expired).
 	// If the function returns an error, the update is aborted and no changes are made.

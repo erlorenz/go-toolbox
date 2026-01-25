@@ -71,6 +71,31 @@ func (s *MemoryStore) Set(ctx context.Context, key string, value []byte, ttl tim
 	return nil
 }
 
+// SetMany stores multiple key-value pairs with the same TTL.
+// This is more efficient than calling Set multiple times as it acquires the lock only once.
+func (s *MemoryStore) SetMany(ctx context.Context, items map[string][]byte, ttl time.Duration) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var expiresAt time.Time
+	if ttl > 0 {
+		expiresAt = time.Now().Add(ttl)
+	}
+
+	for key, value := range items {
+		s.data[key] = &item{
+			value:     value,
+			expiresAt: expiresAt,
+		}
+	}
+
+	return nil
+}
+
 // Update atomically reads, modifies, and writes a value.
 // The function receives the current value (or nil if key doesn't exist/expired).
 // If the function returns an error, no changes are made.
