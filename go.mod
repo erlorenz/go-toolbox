@@ -1,6 +1,6 @@
 module github.com/erlorenz/go-toolbox
 
-go 1.25
+go 1.24
 
 require github.com/jackc/pgx/v5 v5.8.0
 
